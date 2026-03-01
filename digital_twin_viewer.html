@@ -1,0 +1,1190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Engine Digital Twin — Sensor Monitor</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&display=swap');
+
+  :root {
+    --bg: #050a12;
+    --panel: #0a1628;
+    --border: #1a3a5c;
+    --accent: #00d4ff;
+    --ok: #00c96b;
+    --fault: #ff3355;
+    --warn: #ffaa00;
+    --text: #c8dff0;
+    --dim: #4a6a8a;
+  }
+
+  /* ── LIGHT MODE OVERRIDES ── */
+  body.light-mode {
+    --bg: #f0f4f8;
+    --panel: #ffffff;
+    --border: #ccd8e8;
+    --accent: #0077cc;
+    --ok: #00a855;
+    --fault: #e0002e;
+    --warn: #d48000;
+    --text: #1a2a3a;
+    --dim: #7a90a8;
+  }
+
+  body.light-mode::before {
+    background-image:
+      linear-gradient(rgba(0,119,204,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,119,204,0.04) 1px, transparent 1px);
+  }
+
+  body.light-mode #topbar {
+    background: linear-gradient(180deg, rgba(240,244,248,0.98) 0%, rgba(240,244,248,0.85) 100%);
+  }
+
+  body.light-mode #left-panel,
+  body.light-mode #right-panel {
+    background: rgba(255,255,255,0.96);
+  }
+
+  body.light-mode #bottombar {
+    background: rgba(240,244,248,0.97);
+  }
+
+  body.light-mode .sensor-item {
+    background: #f8fafc;
+  }
+
+  body.light-mode .sensor-item.fault {
+    background: rgba(224,0,46,0.05);
+  }
+
+  body.light-mode .stat-block {
+    background: rgba(0,119,204,0.04);
+  }
+
+  body.light-mode svg.ring text {
+    fill: var(--accent);
+  }
+
+  body.light-mode #tooltip {
+    background: rgba(255,255,255,0.97);
+    box-shadow: 0 4px 24px rgba(0,100,200,0.12);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Rajdhani', sans-serif;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  body::before {
+    content:'';
+    position:fixed; inset:0;
+    background-image:
+      linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events:none;
+  }
+
+  #canvas-container { position:absolute; inset:0; }
+  canvas { display:block; }
+
+  /* ── TOP BAR ── */
+  #topbar {
+    position:fixed; top:0; left:0; right:0; height:56px;
+    background: linear-gradient(180deg, rgba(5,10,18,0.98) 0%, rgba(5,10,18,0.7) 100%);
+    border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 24px; z-index:100;
+  }
+
+  #topbar .logo {
+    font-family:'Orbitron',monospace; font-size:14px; font-weight:900;
+    color:var(--accent); letter-spacing:3px; text-transform:uppercase;
+  }
+  #topbar .logo span { color:#fff; }
+
+  #system-status {
+    display:flex; gap:24px; align-items:center;
+    font-size:12px; font-weight:600; letter-spacing:1.5px;
+  }
+
+  .status-pill {
+    display:flex; align-items:center; gap:6px;
+    padding:4px 12px; border-radius:20px; border:1px solid;
+    font-family:'Orbitron',monospace; font-size:10px;
+  }
+  .status-pill.ok    { border-color:var(--ok);    color:var(--ok); }
+  .status-pill.fault { border-color:var(--fault); color:var(--fault); }
+  .status-pill.warn  { border-color:var(--warn);  color:var(--warn); }
+
+  .pulse-dot { width:7px; height:7px; border-radius:50%; animation:blink 1.2s ease-in-out infinite; }
+  .ok .pulse-dot    { background:var(--ok); }
+  .fault .pulse-dot { background:var(--fault); }
+  .warn .pulse-dot  { background:var(--warn); }
+
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+
+  #timestamp { font-family:'Orbitron',monospace; font-size:11px; color:var(--dim); letter-spacing:1px; }
+
+  /* ── LEFT PANEL ── */
+  #left-panel {
+    position:fixed; top:56px; left:0; bottom:0; width:280px;
+    background:rgba(10,22,40,0.92); border-right:1px solid var(--border);
+    overflow-y:auto; z-index:50; padding:16px; backdrop-filter:blur(12px);
+  }
+  #left-panel::-webkit-scrollbar { width:4px; }
+  #left-panel::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+  .panel-title {
+    font-family:'Orbitron',monospace; font-size:10px; letter-spacing:3px;
+    color:var(--accent); text-transform:uppercase;
+    margin-bottom:14px; padding-bottom:8px; border-bottom:1px solid var(--border);
+  }
+
+  .sensor-item {
+    display:flex; align-items:center; gap:10px;
+    padding:10px 12px; margin-bottom:6px; border-radius:6px;
+    border:1px solid var(--border); cursor:pointer;
+    transition:all 0.2s; position:relative; overflow:hidden;
+  }
+  .sensor-item::before {
+    content:''; position:absolute; left:0; top:0; bottom:0; width:3px; transition:background 0.3s;
+  }
+  .sensor-item.ok::before    { background:var(--ok); }
+  .sensor-item.fault::before { background:var(--fault); }
+  .sensor-item.warn::before  { background:var(--warn); }
+
+  .sensor-item:hover { border-color:var(--accent); background:rgba(0,212,255,0.05); }
+
+  .sensor-item.fault {
+    background:rgba(255,51,85,0.08); border-color:rgba(255,51,85,0.4);
+    animation:faultPulse 2s ease-in-out infinite;
+  }
+  @keyframes faultPulse { 0%,100%{box-shadow:none} 50%{box-shadow:0 0 12px rgba(255,51,85,0.3)} }
+
+  .sensor-icon { width:32px; height:32px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+  .sensor-item.ok    .sensor-icon { background:rgba(0,255,136,0.12); }
+  .sensor-item.fault .sensor-icon { background:rgba(255,51,85,0.15); }
+  .sensor-item.warn  .sensor-icon { background:rgba(255,170,0,0.12); }
+
+  .sensor-info { flex:1; min-width:0; }
+  .sensor-name { font-size:12px; font-weight:600; letter-spacing:0.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sensor-val  { font-family:'Orbitron',monospace; font-size:10px; color:var(--dim); margin-top:2px; }
+
+  .sensor-badge { font-family:'Orbitron',monospace; font-size:8px; letter-spacing:1px; padding:2px 7px; border-radius:10px; font-weight:700; }
+  .badge-ok    { background:rgba(0,255,136,0.15); color:var(--ok); }
+  .badge-fault { background:rgba(255,51,85,0.2);  color:var(--fault); }
+  .badge-warn  { background:rgba(255,170,0,0.15); color:var(--warn); }
+
+  /* ── RIGHT PANEL ── */
+  #right-panel {
+    position:fixed; top:56px; right:0; bottom:0; width:260px;
+    background:rgba(10,22,40,0.92); border-left:1px solid var(--border);
+    z-index:50; padding:16px; backdrop-filter:blur(12px);
+    display:flex; flex-direction:column; gap:16px; overflow-y:auto;
+  }
+  #right-panel::-webkit-scrollbar { width:4px; }
+  #right-panel::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+  .stat-block { background:rgba(0,212,255,0.04); border:1px solid var(--border); border-radius:8px; padding:14px; flex-shrink:0; }
+  .stat-label { font-family:'Orbitron',monospace; font-size:9px; letter-spacing:2px; color:var(--dim); text-transform:uppercase; margin-bottom:8px; }
+  .stat-value { font-family:'Orbitron',monospace; font-size:28px; font-weight:900; color:var(--accent); line-height:1; }
+  .stat-value.danger { color:var(--fault); }
+  .stat-value.warn   { color:var(--warn); }
+  .stat-sub { font-size:11px; color:var(--dim); margin-top:4px; }
+
+  .bar-container { margin-top:8px; height:4px; background:rgba(255,255,255,0.06); border-radius:2px; overflow:hidden; }
+  .bar-fill { height:100%; border-radius:2px; transition:width 0.5s, background 0.5s; }
+
+  #health-ring-wrap { display:flex; align-items:center; justify-content:center; padding:8px 0; }
+  svg.ring text { font-family:'Orbitron',monospace; fill:var(--accent); }
+
+  /* ── TOOLTIP ── */
+  #tooltip {
+    position:fixed; background:rgba(5,10,18,0.95); border:1px solid var(--accent);
+    border-radius:8px; padding:12px 16px; pointer-events:none; z-index:200;
+    min-width:180px; display:none; backdrop-filter:blur(8px);
+    box-shadow:0 0 20px rgba(0,212,255,0.15);
+  }
+  #tooltip .tt-name { font-family:'Orbitron',monospace; font-size:11px; font-weight:700; color:var(--accent); letter-spacing:1px; margin-bottom:6px; }
+  #tooltip .tt-row  { display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px; color:var(--dim); }
+  #tooltip .tt-row span:last-child { color:var(--text); }
+
+  /* ── BOTTOM BAR ── */
+  #bottombar {
+    position:fixed; bottom:0; left:280px; right:260px; height:44px;
+    background:rgba(5,10,18,0.96); border-top:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between;
+    padding:0 24px; z-index:100; font-size:11px; letter-spacing:1px;
+  }
+  #bottombar .hint { color:var(--dim); }
+  #bottombar .hint kbd {
+    background:var(--panel); border:1px solid var(--border);
+    padding:1px 5px; border-radius:3px;
+    font-family:'Orbitron',monospace; font-size:9px; color:var(--accent);
+  }
+
+  /* ── SIM PANEL ── */
+  #sim-panel { flex-shrink:0; }
+
+  .sim-btn {
+    width:100%; padding:10px; border-radius:6px; border:1px solid;
+    font-family:'Orbitron',monospace; font-size:10px; letter-spacing:2px;
+    cursor:pointer; transition:all 0.2s; font-weight:700;
+    margin-bottom:8px; text-transform:uppercase;
+  }
+  .sim-btn.inject { border-color:var(--fault); color:var(--fault); background:rgba(255,51,85,0.08); }
+  .sim-btn.inject:hover { background:rgba(255,51,85,0.18); box-shadow:0 0 16px rgba(255,51,85,0.3); }
+  .sim-btn.clear  { border-color:var(--ok); color:var(--ok); background:rgba(0,255,136,0.06); }
+  .sim-btn.clear:hover { background:rgba(0,255,136,0.14); }
+
+  /* ── THEME TOGGLE ── */
+  #theme-toggle {
+    display:flex; align-items:center; gap:7px; padding:5px 13px;
+    border-radius:20px; border:1px solid var(--border); background:transparent;
+    color:var(--text); font-family:'Orbitron',monospace; font-size:9px;
+    letter-spacing:1.5px; cursor:pointer; transition:all 0.25s; font-weight:700;
+  }
+  #theme-toggle:hover { border-color:var(--accent); color:var(--accent); }
+  .toggle-icon { font-size:13px; }
+
+  /* ── CSV UPLOAD ── */
+  #csv-panel {
+    border:1px dashed var(--border); border-radius:8px; padding:12px;
+    background:rgba(0,212,255,0.02); flex-shrink:0;
+  }
+  #csv-file-input { display:none; }
+
+  #csv-filename {
+    font-size:10px; color:var(--dim); text-align:center; margin-bottom:4px;
+    font-family:'Orbitron',monospace; letter-spacing:0.5px; word-break:break-all;
+  }
+  #csv-status {
+    font-size:10px; text-align:center; margin-top:6px; min-height:14px;
+    font-family:'Orbitron',monospace; letter-spacing:0.5px; transition:color 0.3s; word-break:break-word;
+  }
+  #csv-status.ok-msg   { color:var(--ok); }
+  #csv-status.err-msg  { color:var(--fault); }
+  #csv-status.info-msg { color:var(--accent); }
+
+  #csv-debug {
+    font-size:9px; color:var(--dim); margin-top:6px; line-height:1.6;
+    display:none; word-break:break-word;
+  }
+
+  /* ── TRANSPARENCY SLIDER ── */
+  #transparency-wrap { display:flex; flex-direction:column; gap:6px; }
+  #transparency-wrap .slider-row { display:flex; align-items:center; gap:10px; }
+
+  #opacity-slider {
+    flex:1; -webkit-appearance:none; height:4px; border-radius:2px; outline:none; cursor:pointer;
+    background:linear-gradient(to right, var(--accent) 0%, var(--accent) 55%, var(--border) 55%);
+    transition:background 0.15s;
+  }
+  #opacity-slider::-webkit-slider-thumb {
+    -webkit-appearance:none; width:14px; height:14px; border-radius:50%;
+    background:var(--accent); border:2px solid var(--bg);
+    box-shadow:0 0 6px rgba(0,212,255,0.5); cursor:pointer;
+  }
+  #opacity-val { font-family:'Orbitron',monospace; font-size:10px; color:var(--accent); min-width:32px; text-align:right; }
+
+  /* ── LOADER ── */
+  #loader {
+    position:fixed; inset:0; background:var(--bg);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    z-index:1000; gap:16px;
+  }
+  #loader .l-title { font-family:'Orbitron',monospace; font-size:14px; letter-spacing:4px; color:var(--accent); }
+  .loader-bar { width:200px; height:2px; background:var(--border); border-radius:1px; overflow:hidden; }
+  .loader-fill { height:100%; width:0; background:var(--accent); animation:load 2s ease forwards; }
+  @keyframes load { to{width:100%} }
+  #loader .l-sub { font-size:11px; color:var(--dim); letter-spacing:2px; }
+  #loader::after {
+    content:''; position:absolute; left:0; right:0; height:2px;
+    background:linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation:scanLine 2s linear forwards;
+  }
+  @keyframes scanLine { 0%{top:0;opacity:1} 100%{top:100%;opacity:0} }
+
+  /* ── GRAPH MODAL ── */
+  #graph-modal {
+    position:fixed; inset:0; background:rgba(0,0,0,0.72);
+    z-index:500; display:none; align-items:center; justify-content:center;
+    backdrop-filter:blur(4px);
+  }
+  #graph-modal.open { display:flex; }
+
+  #graph-box {
+    background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    padding:24px; width:min(720px,92vw); max-height:88vh; overflow-y:auto;
+    box-shadow:0 0 48px rgba(0,212,255,0.12); position:relative;
+    animation:modalIn 0.22s ease;
+  }
+  @keyframes modalIn { from{opacity:0;transform:scale(0.96) translateY(12px)} to{opacity:1;transform:scale(1) translateY(0)} }
+  #graph-box::-webkit-scrollbar { width:4px; }
+  #graph-box::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+  #graph-modal-title { font-family:'Orbitron',monospace; font-size:13px; font-weight:900; color:var(--accent); letter-spacing:2px; margin-bottom:4px; }
+  #graph-modal-desc  { font-size:11px; color:var(--dim); margin-bottom:18px; letter-spacing:0.5px; }
+
+  #graph-close {
+    position:absolute; top:16px; right:16px; background:transparent;
+    border:1px solid var(--border); color:var(--text); font-size:16px;
+    width:30px; height:30px; border-radius:6px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; transition:border-color 0.2s, color 0.2s;
+  }
+  #graph-close:hover { border-color:var(--fault); color:var(--fault); }
+
+  .graph-meta-row { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:18px; }
+  .graph-meta-cell { background:rgba(0,212,255,0.04); border:1px solid var(--border); border-radius:8px; padding:10px 12px; text-align:center; }
+  .graph-meta-cell .gm-label { font-family:'Orbitron',monospace; font-size:8px; letter-spacing:1.5px; color:var(--dim); text-transform:uppercase; margin-bottom:5px; }
+  .graph-meta-cell .gm-value { font-family:'Orbitron',monospace; font-size:15px; font-weight:900; color:var(--accent); }
+  .graph-meta-cell .gm-value.fault { color:var(--fault); }
+  .graph-meta-cell .gm-value.warn  { color:var(--warn); }
+  .graph-meta-cell .gm-value.ok    { color:var(--ok); }
+
+  #graph-canvas-wrap { border:1px solid var(--border); border-radius:8px; overflow:hidden; background:rgba(0,0,0,0.25); margin-bottom:14px; }
+  #graph-canvas { display:block; width:100%; height:220px; }
+
+  .graph-legend-row { display:flex; gap:18px; align-items:center; font-size:11px; color:var(--dim); padding:0 4px; }
+  .legend-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+
+  .anomaly-bar-wrap { margin-top:14px; }
+  .anomaly-bar-label { display:flex; justify-content:space-between; font-family:'Orbitron',monospace; font-size:9px; letter-spacing:1px; color:var(--dim); margin-bottom:6px; }
+  .anomaly-bar-track { height:8px; background:rgba(255,255,255,0.06); border-radius:4px; overflow:hidden; }
+  .anomaly-bar-fill  { height:100%; border-radius:4px; transition:width 0.6s, background 0.4s; }
+</style>
+</head>
+<body>
+
+<!-- LOADER -->
+<div id="loader">
+  <div class="l-title">INITIALIZING DIGITAL TWIN</div>
+  <div class="loader-bar"><div class="loader-fill"></div></div>
+  <div class="l-sub">LOADING ENGINE SENSOR ARRAY...</div>
+</div>
+
+<!-- TOP BAR -->
+<div id="topbar">
+  <div class="logo">ENGINE<span>TWIN</span> · PREDICTIVE MONITOR</div>
+  <div id="system-status">
+    <div class="status-pill ok" id="sys-status-pill">
+      <div class="pulse-dot"></div>
+      <span id="sys-status-text">ALL SYSTEMS OK</span>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <button id="theme-toggle" onclick="toggleTheme()">
+      <span class="toggle-icon" id="theme-icon">☀️</span>
+      <span id="theme-label">LIGHT MODE</span>
+    </button>
+    <div id="timestamp">--:--:--</div>
+  </div>
+</div>
+
+<!-- LEFT PANEL: sensor list -->
+<div id="left-panel">
+  <div class="panel-title">⬡ Sensor Array</div>
+  <div id="sensor-list"></div>
+</div>
+
+<!-- 3D canvas -->
+<div id="canvas-container"></div>
+
+<!-- RIGHT PANEL -->
+<div id="right-panel">
+  <div class="panel-title">⬡ System Health</div>
+
+  <div class="stat-block">
+    <div class="stat-label">Health Score</div>
+    <div id="health-ring-wrap">
+      <svg class="ring" width="110" height="110" viewBox="0 0 110 110">
+        <circle cx="55" cy="55" r="44" fill="none" stroke="rgba(0,212,255,0.1)" stroke-width="8"/>
+        <circle id="ring-circle" cx="55" cy="55" r="44" fill="none"
+          stroke="var(--ok)" stroke-width="8"
+          stroke-dasharray="276.46" stroke-dashoffset="0"
+          stroke-linecap="round" transform="rotate(-90 55 55)"
+          style="transition:stroke-dashoffset 0.8s, stroke 0.5s"/>
+        <text x="55" y="50" text-anchor="middle" font-size="22" font-weight="900" id="ring-pct">100%</text>
+        <text x="55" y="66" text-anchor="middle" font-size="9" fill="#4a6a8a" letter-spacing="1">NOMINAL</text>
+      </svg>
+    </div>
+  </div>
+
+  <div class="stat-block">
+    <div class="stat-label">Fault Sensors</div>
+    <div class="stat-value danger" id="stat-faults">0</div>
+    <div class="stat-sub" id="stat-fault-names">None detected</div>
+  </div>
+
+  <div class="stat-block">
+    <div class="stat-label">Total Sensors</div>
+    <div class="stat-value" id="stat-total">0</div>
+    <div class="stat-sub">Monitored active</div>
+    <div class="bar-container">
+      <div class="bar-fill" id="health-bar" style="width:100%;background:var(--ok)"></div>
+    </div>
+  </div>
+
+  <div class="stat-block">
+    <div class="stat-label">Last Prediction</div>
+    <div style="font-family:'Orbitron',monospace;font-size:11px;color:var(--accent)" id="last-pred">Awaiting data...</div>
+    <div class="stat-sub" id="last-pred-time">--</div>
+  </div>
+
+  <div id="sim-panel">
+    <div class="panel-title" style="margin-top:8px">⬡ Simulation</div>
+    <button class="sim-btn inject" onclick="simulateFault()">⚠ Inject Random Fault</button>
+    <button class="sim-btn clear"  onclick="clearAllFaults()">✓ Clear All Faults</button>
+
+    <!-- ── CSV UPLOAD ── -->
+    <div class="panel-title" style="margin-top:8px">⬡ Upload Sensor Data</div>
+    <div id="csv-panel">
+      <!--
+        Hidden real file input.
+        value is cleared on every button click so selecting the SAME file
+        a second time still fires the onchange event.
+      -->
+      <input type="file" id="csv-file-input" accept=".csv"
+             onchange="handleCsvFile(this.files[0])"/>
+
+      <!-- Visible upload button -->
+      <button class="sim-btn" id="csv-upload-btn"
+              onclick="document.getElementById('csv-file-input').value='';
+                       document.getElementById('csv-file-input').click();"
+              style="border-color:var(--accent);color:var(--accent);
+                     background:rgba(0,212,255,0.07);margin-bottom:6px;">
+        📂 &nbsp; SELECT CSV FILE
+      </button>
+
+      <!-- Filename display -->
+      <div id="csv-filename">No file selected</div>
+
+      <!-- Status line -->
+      <div id="csv-status" class="info-msg">—</div>
+
+      <!-- Debug: shows matched / unmatched columns -->
+      <div id="csv-debug"></div>
+    </div>
+
+    <!-- ── TRANSPARENCY SLIDER ── -->
+    <div class="panel-title" style="margin-top:12px">⬡ Model Transparency</div>
+    <div class="stat-block" style="padding:10px 14px;">
+      <div id="transparency-wrap">
+        <div class="slider-row">
+          <span style="font-size:11px;color:var(--dim)">Opaque</span>
+          <input type="range" id="opacity-slider" min="5" max="100" value="55"
+                 oninput="updateCarOpacity(this.value)"/>
+          <span id="opacity-val">55%</span>
+        </div>
+        <div style="font-size:10px;color:var(--dim);margin-top:4px">
+          Lower = see-through, see sensors inside
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BOTTOM BAR -->
+<div id="bottombar">
+  <div class="hint"><kbd>DRAG</kbd> Rotate &nbsp; <kbd>SCROLL</kbd> Zoom &nbsp; <kbd>CLICK</kbd> Sensor detail</div>
+  <div class="hint">ENGINE DIGITAL TWIN v1.0 &nbsp;·&nbsp; FYP PREDICTIVE MAINTENANCE</div>
+</div>
+
+<!-- TOOLTIP -->
+<div id="tooltip">
+  <div class="tt-name" id="tt-name">—</div>
+  <div class="tt-row"><span>Status</span><span id="tt-status">—</span></div>
+  <div class="tt-row"><span>Value</span><span id="tt-val">—</span></div>
+  <div class="tt-row"><span>Reference</span><span id="tt-ref">—</span></div>
+  <div class="tt-row"><span>Anomaly Score</span><span id="tt-score">—</span></div>
+</div>
+
+<!-- SENSOR GRAPH MODAL -->
+<div id="graph-modal">
+  <div id="graph-box">
+    <button id="graph-close" onclick="closeGraphModal()">✕</button>
+    <div id="graph-modal-title">—</div>
+    <div id="graph-modal-desc">—</div>
+    <div class="graph-meta-row">
+      <div class="graph-meta-cell"><div class="gm-label">Current Value</div><div class="gm-value" id="gm-cur">—</div></div>
+      <div class="graph-meta-cell"><div class="gm-label">Reference</div><div class="gm-value" id="gm-ref">—</div></div>
+      <div class="graph-meta-cell"><div class="gm-label">Status</div><div class="gm-value" id="gm-status">—</div></div>
+      <div class="graph-meta-cell"><div class="gm-label">Anomaly Score</div><div class="gm-value" id="gm-score">—</div></div>
+    </div>
+    <div id="graph-canvas-wrap"><canvas id="graph-canvas"></canvas></div>
+    <div class="graph-legend-row">
+      <span><span class="legend-dot" style="background:#00ff88"></span>Actual sensor stream</span>
+      <span><span class="legend-dot" style="background:#00d4ff;opacity:0.6"></span>Reference (digital twin)</span>
+      <span><span class="legend-dot" style="background:#ff3355"></span>Fault threshold</span>
+    </div>
+    <div class="anomaly-bar-wrap">
+      <div class="anomaly-bar-label"><span>ANOMALY SCORE</span><span id="gm-score-pct">0%</span></div>
+      <div class="anomaly-bar-track"><div class="anomaly-bar-fill" id="anomaly-bar-fill" style="width:0%"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- THREE.JS CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+// ══════════════════════════════════════════════════════════════
+//  SENSOR DEFINITIONS
+//  id          : must match CSV column headers AND Flask sensor IDs
+//  position    : [x,y,z] relative to car centre — tune after loading GLB
+//  refVal      : healthy reference value from your digital twin model
+// ══════════════════════════════════════════════════════════════
+const SENSORS = [
+  { id:'engine_temp',  name:'Engine Temp',      icon:'🌡️', position:[-0.3,  0.35, 1.2],  unit:'°C',  refVal:90,    curVal:91,    description:'Coolant temperature sensor' },
+  { id:'map_sensor',   name:'MAP Sensor',        icon:'📊', position:[-0.1,  0.38, 1.0],  unit:'kPa', refVal:101.3, curVal:101.3, description:'Manifold absolute pressure' },
+  { id:'o2_sensor',    name:'O₂ Sensor',         icon:'💨', position:[ 0.2,  0.15, 0.9],  unit:'V',   refVal:0.45,  curVal:0.44,  description:'Oxygen / lambda sensor' },
+  { id:'maf_sensor',   name:'MAF Sensor',        icon:'🌬️', position:[-0.35, 0.42, 1.35], unit:'g/s', refVal:12.0,  curVal:12.0,  description:'Mass air flow sensor' },
+  { id:'throttle_pos', name:'Throttle Position', icon:'🔧', position:[-0.15, 0.3,  1.1],  unit:'%',   refVal:15,    curVal:15,    description:'Throttle position sensor' },
+  { id:'crankshaft',   name:'Crankshaft Pos',    icon:'⚙️', position:[ 0.0, -0.05, 0.4],  unit:'RPM', refVal:800,   curVal:802,   description:'Crankshaft position sensor' },
+  { id:'camshaft',     name:'Camshaft Pos',      icon:'🔩', position:[ 0.2,  0.22, 0.85], unit:'°',   refVal:0.0,   curVal:0.0,   description:'Camshaft position sensor' },
+  { id:'knock_sensor', name:'Knock Sensor',      icon:'🔊', position:[-0.18, 0.08, 0.65], unit:'mV',  refVal:10,    curVal:10,    description:'Engine knock / detonation' },
+  { id:'fuel_pressure',name:'Fuel Pressure',     icon:'⛽', position:[ 0.1,  0.1,  1.0],  unit:'bar', refVal:3.5,   curVal:3.5,   description:'Fuel rail pressure sensor' },
+  { id:'egr_sensor',   name:'EGR Sensor',        icon:'♻️', position:[ 0.25, 0.3,  0.75], unit:'%',   refVal:18,    curVal:18,    description:'Exhaust gas recirculation' },
+  { id:'oil_pressure', name:'Oil Pressure',      icon:'🛢️', position:[-0.05,-0.1,  0.5],  unit:'PSI', refVal:45,    curVal:45,    description:'Engine oil pressure sensor' },
+  { id:'iat_sensor',   name:'Intake Air Temp',   icon:'🌡️', position:[-0.3,  0.45, 1.25], unit:'°C',  refVal:25,    curVal:25,    description:'Intake air temperature' }
+];
+
+// ══════════════════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════════════════
+let sensorStates  = {};
+let sensorMarkers = {};
+let sensorRings   = {};
+let csvAllRows    = []; // all parsed CSV rows — used for graph time-series
+
+SENSORS.forEach(s => { sensorStates[s.id] = 'ok'; s.anomalyScore = 0.01; });
+
+// ══════════════════════════════════════════════════════════════
+//  THREE.JS SETUP
+// ══════════════════════════════════════════════════════════════
+const container = document.getElementById('canvas-container');
+const W = () => container.clientWidth;
+const H = () => container.clientHeight;
+
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(W(), H());
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050a12);
+scene.fog = new THREE.FogExp2(0x050a12, 0.08);
+
+const camera = new THREE.PerspectiveCamera(45, W()/H(), 0.01, 100);
+camera.position.set(0, 1.5, 4.5);
+camera.lookAt(0, 0.3, 0);
+
+const ambientLight = new THREE.AmbientLight(0x1a3a5c, 1.5); scene.add(ambientLight);
+const dirLight = new THREE.DirectionalLight(0x4488cc, 3); dirLight.position.set(3,5,4); dirLight.castShadow=true; scene.add(dirLight);
+const rimLight = new THREE.DirectionalLight(0x00d4ff, 1.5); rimLight.position.set(-4,2,-3); scene.add(rimLight);
+const fillLight = new THREE.PointLight(0x0044ff, 1.0, 10); fillLight.position.set(0,-1,0); scene.add(fillLight);
+
+const groundMat = new THREE.MeshStandardMaterial({ color:0x050a12, metalness:0.8, roughness:0.3 });
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(20,20), groundMat);
+ground.rotation.x = -Math.PI/2; ground.position.y = -0.85; ground.receiveShadow=true; scene.add(ground);
+
+const grid = new THREE.GridHelper(20, 40, 0x0a2040, 0x0a2040);
+grid.position.y = -0.84; scene.add(grid);
+
+// ══════════════════════════════════════════════════════════════
+//  CAR MODEL  (loads static/car.glb — place your GLB in the static/ folder)
+// ══════════════════════════════════════════════════════════════
+let carGroup = new THREE.Group(); scene.add(carGroup);
+let carLoaded = false;
+let carBodyMaterials = [];
+
+function loadCarModel() {
+  const loader = new THREE.GLTFLoader();
+  loader.load(
+    'http://localhost:5000/static/car.glb',
+    (gltf) => {
+      while (carGroup.children.length) carGroup.remove(carGroup.children[0]);
+      carBodyMaterials = [];
+      const model = gltf.scene;
+
+      // Auto-scale to ~4 units
+      const box = new THREE.Box3().setFromObject(model);
+      const size = new THREE.Vector3(); box.getSize(size);
+      const scale = 3.8 / Math.max(size.x, size.y, size.z);
+      model.scale.set(scale, scale, scale);
+
+      // Centre
+      box.setFromObject(model);
+      const centre = new THREE.Vector3(); box.getCenter(centre);
+      model.position.sub(centre);
+
+      // Make transparent + collect materials
+      model.traverse(child => {
+        if (!child.isMesh) return;
+        child.castShadow = true; child.receiveShadow = true;
+        const mats = Array.isArray(child.material) ? child.material : [child.material];
+        mats.forEach(mat => { mat.transparent=true; mat.opacity=0.55; carBodyMaterials.push(mat); });
+      });
+
+      carGroup.add(model);
+      carLoaded = true;
+      buildSensorMarkers(); buildUI(); hideLoader();
+    },
+    (xhr) => {
+      const pct = Math.round((xhr.loaded/(xhr.total||1))*100);
+      const sub = document.querySelector('#loader .l-sub');
+      if (sub) sub.textContent = `LOADING CAR MODEL... ${pct}%`;
+    },
+    (err) => {
+      console.error('Could not load static/car.glb:', err);
+      // Show error on the loader screen — make sure car.glb is in the static/ folder
+      const sub = document.querySelector('#loader .l-sub');
+      const title = document.querySelector('#loader .l-title');
+      if (title) title.style.color = '#ff3355';
+      if (sub)   sub.textContent   = 'ERROR: static/car.glb not found — place your GLB file in the static/ folder';
+    }
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SENSOR MARKERS
+// ══════════════════════════════════════════════════════════════
+const COLORS = { ok:new THREE.Color(0x00ff88), fault:new THREE.Color(0xff3355), warn:new THREE.Color(0xffaa00) };
+
+function buildSensorMarkers() {
+  SENSORS.forEach(s => {
+    const grp = new THREE.Group();
+    const ringMat   = new THREE.MeshBasicMaterial({ color:COLORS['ok'], transparent:true, opacity:0.7 });
+    const ring      = new THREE.Mesh(new THREE.TorusGeometry(0.072,0.008,8,32), ringMat);
+    grp.add(ring); sensorRings[s.id] = ring;
+    const sphereMat = new THREE.MeshStandardMaterial({ color:COLORS['ok'], emissive:COLORS['ok'], emissiveIntensity:0.8, metalness:0.3, roughness:0.2 });
+    const sphere    = new THREE.Mesh(new THREE.SphereGeometry(0.045,16,16), sphereMat);
+    sphere.userData = { sensorId:s.id }; grp.add(sphere); sensorMarkers[s.id] = sphere;
+    const lineMat   = new THREE.LineBasicMaterial({ color:COLORS['ok'], transparent:true, opacity:0.4 });
+    grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0),new THREE.Vector3(0,-0.25,0)]), lineMat));
+    grp.position.set(...s.position); carGroup.add(grp);
+    s._group=grp; s._sphereMat=sphereMat; s._ringMat=ringMat; s._lineMat=lineMat;
+  });
+}
+
+function updateMarkerColor(sensorId, status) {
+  const s = SENSORS.find(x=>x.id===sensorId); if(!s) return;
+  const col = COLORS[status];
+  s._sphereMat.color.set(col); s._sphereMat.emissive.set(col);
+  s._ringMat.color.set(col);   s._lineMat.color.set(col);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  ORBIT CONTROLS
+// ══════════════════════════════════════════════════════════════
+let isDragging=false, prevMouse={x:0,y:0};
+let theta=0, phi=Math.PI/6, radius=4.5;
+const target = new THREE.Vector3(0,0.3,0);
+
+renderer.domElement.addEventListener('mousedown', e=>{isDragging=true; prevMouse={x:e.clientX,y:e.clientY};});
+renderer.domElement.addEventListener('mousemove', e=>{
+  if(!isDragging){handleHover(e);return;}
+  theta -= (e.clientX-prevMouse.x)*0.006;
+  phi = Math.max(0.05,Math.min(Math.PI/2.2, phi+(e.clientY-prevMouse.y)*0.004));
+  prevMouse={x:e.clientX,y:e.clientY};
+});
+renderer.domElement.addEventListener('mouseup',  ()=>isDragging=false);
+renderer.domElement.addEventListener('wheel',    e =>radius=Math.max(1.5,Math.min(10,radius+e.deltaY*0.005)));
+renderer.domElement.addEventListener('touchstart',e=>{isDragging=true;prevMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};});
+renderer.domElement.addEventListener('touchmove', e=>{
+  if(!isDragging)return;
+  theta-=(e.touches[0].clientX-prevMouse.x)*0.006;
+  phi=Math.max(0.05,Math.min(Math.PI/2.2,phi+(e.touches[0].clientY-prevMouse.y)*0.004));
+  prevMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};
+});
+renderer.domElement.addEventListener('touchend',()=>isDragging=false);
+
+function updateCamera() {
+  camera.position.x = target.x + radius*Math.sin(theta)*Math.cos(phi);
+  camera.position.y = target.y + radius*Math.sin(phi);
+  camera.position.z = target.z + radius*Math.cos(theta)*Math.cos(phi);
+  camera.lookAt(target);
+}
+
+// ══════════════════════════════════════════════════════════════
+//  RAYCASTING
+// ══════════════════════════════════════════════════════════════
+const raycaster = new THREE.Raycaster();
+const mouse2D   = new THREE.Vector2();
+const tooltip   = document.getElementById('tooltip');
+
+function toNDC(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse2D.x =  ((e.clientX-rect.left)/rect.width)*2-1;
+  mouse2D.y = -((e.clientY-rect.top) /rect.height)*2+1;
+}
+
+function handleHover(e) {
+  toNDC(e);
+  raycaster.setFromCamera(mouse2D, camera);
+  const hits = raycaster.intersectObjects(Object.values(sensorMarkers));
+  if (hits.length>0) {
+    showTooltip(e, SENSORS.find(x=>x.id===hits[0].object.userData.sensorId));
+    renderer.domElement.style.cursor='pointer';
+  } else {
+    tooltip.style.display='none';
+    renderer.domElement.style.cursor='default';
+  }
+}
+
+renderer.domElement.addEventListener('click', e=>{
+  toNDC(e);
+  raycaster.setFromCamera(mouse2D,camera);
+  const hits=raycaster.intersectObjects(Object.values(sensorMarkers));
+  if(hits.length>0){
+    const sid=hits[0].object.userData.sensorId;
+    document.querySelectorAll('.sensor-item').forEach(el=>el.style.outline='none');
+    const el=document.getElementById('si-'+sid);
+    if(el){el.style.outline='1px solid var(--accent)';el.scrollIntoView({behavior:'smooth',block:'nearest'});}
+    openGraphModal(sid);
+  }
+});
+
+function showTooltip(e, s) {
+  const st=sensorStates[s.id];
+  document.getElementById('tt-name').textContent   = s.name;
+  document.getElementById('tt-status').textContent = st.toUpperCase();
+  document.getElementById('tt-status').style.color = st==='ok'?'var(--ok)':st==='fault'?'var(--fault)':'var(--warn)';
+  document.getElementById('tt-val').textContent    = `${s.curVal} ${s.unit}`;
+  document.getElementById('tt-ref').textContent    = `${s.refVal} ${s.unit}`;
+  document.getElementById('tt-score').textContent  = (s.anomalyScore*100).toFixed(1)+'%';
+  tooltip.style.display='block';
+  tooltip.style.left=(e.clientX+16)+'px';
+  tooltip.style.top =(e.clientY-20)+'px';
+}
+
+// ══════════════════════════════════════════════════════════════
+//  LEFT PANEL UI
+// ══════════════════════════════════════════════════════════════
+function buildUI() {
+  const list = document.getElementById('sensor-list');
+  list.innerHTML='';
+  SENSORS.forEach(s=>{
+    const st=sensorStates[s.id];
+    const div=document.createElement('div');
+    div.className=`sensor-item ${st}`; div.id='si-'+s.id;
+    div.innerHTML=`
+      <div class="sensor-icon">${s.icon}</div>
+      <div class="sensor-info">
+        <div class="sensor-name">${s.name}</div>
+        <div class="sensor-val">${s.curVal} ${s.unit}</div>
+      </div>
+      <span class="sensor-badge badge-${st}">${st.toUpperCase()}</span>`;
+    div.onclick=()=>{focusSensor(s.id); openGraphModal(s.id);};
+    list.appendChild(div);
+  });
+  document.getElementById('stat-total').textContent=SENSORS.length;
+  updateStats();
+}
+
+function focusSensor(id) {
+  const s=SENSORS.find(x=>x.id===id); if(!s) return;
+  const[x,y,z]=s.position;
+  target.set(x*0.4,y*0.4+0.3,z*0.4); radius=2.5;
+}
+
+function updateStats() {
+  const faults=SENSORS.filter(s=>sensorStates[s.id]==='fault');
+  const health=Math.round(((SENSORS.length-faults.length)/SENSORS.length)*100);
+  document.getElementById('stat-faults').textContent      = faults.length;
+  document.getElementById('stat-fault-names').textContent = faults.length?faults.map(s=>s.name).join(', '):'None detected';
+  const ring=document.getElementById('ring-circle');
+  ring.style.strokeDashoffset=276.46*(1-health/100);
+  ring.style.stroke=health>80?'var(--ok)':health>50?'var(--warn)':'var(--fault)';
+  document.getElementById('ring-pct').textContent=health+'%';
+  const bar=document.getElementById('health-bar');
+  bar.style.width=health+'%'; bar.style.background=health>80?'var(--ok)':health>50?'var(--warn)':'var(--fault)';
+  document.getElementById('sys-status-pill').className='status-pill '+(faults.length===0?'ok':'fault');
+  document.getElementById('sys-status-text').textContent=faults.length===0?'ALL SYSTEMS OK':`${faults.length} FAULT${faults.length>1?'S':''} DETECTED`;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  APPLY PREDICTIONS  (called after CSV upload or Flask response)
+//  predictions: [{sensorId, status, curVal, anomalyScore}, ...]
+// ══════════════════════════════════════════════════════════════
+window.applyPredictions = function(predictions) {
+  predictions.forEach(p=>{
+    const s=SENSORS.find(x=>x.id===p.sensorId); if(!s) return;
+    sensorStates[s.id]=p.status;
+    if(p.curVal!==undefined)       s.curVal      =p.curVal;
+    if(p.anomalyScore!==undefined) s.anomalyScore=p.anomalyScore;
+    updateMarkerColor(s.id,p.status);
+  });
+  buildUI(); updateStats();
+  document.getElementById('last-pred').textContent      ='Model prediction applied';
+  document.getElementById('last-pred-time').textContent =new Date().toLocaleTimeString();
+};
+
+// ══════════════════════════════════════════════════════════════
+//  SIMULATION BUTTONS
+// ══════════════════════════════════════════════════════════════
+window.simulateFault = function() {
+  const s=SENSORS[Math.floor(Math.random()*SENSORS.length)];
+  const wasOk=sensorStates[s.id]==='ok';
+  sensorStates[s.id]=wasOk?(Math.random()>0.7?'warn':'fault'):'ok';
+  const st=sensorStates[s.id];
+  if(st!=='ok'){s.anomalyScore=0.7+Math.random()*0.3;s.curVal=+(s.refVal*(1+(Math.random()*0.3-0.15))).toFixed(2);}
+  else{s.anomalyScore=0.01;s.curVal=s.refVal;}
+  updateMarkerColor(s.id,st); buildUI(); updateStats();
+  document.getElementById('last-pred').textContent      =`${s.name} → ${st.toUpperCase()}`;
+  document.getElementById('last-pred-time').textContent =new Date().toLocaleTimeString();
+};
+
+window.clearAllFaults = function() {
+  SENSORS.forEach(s=>{sensorStates[s.id]='ok';s.anomalyScore=0.01;s.curVal=s.refVal;updateMarkerColor(s.id,'ok');});
+  buildUI(); updateStats();
+  document.getElementById('last-pred').textContent      ='All faults cleared';
+  document.getElementById('last-pred-time').textContent =new Date().toLocaleTimeString();
+  target.set(0,0.3,0); radius=4.5;
+};
+
+// ══════════════════════════════════════════════════════════════
+//  ANIMATION LOOP
+// ══════════════════════════════════════════════════════════════
+let t=0;
+function animate() {
+  requestAnimationFrame(animate); t+=0.016; updateCamera();
+  SENSORS.forEach(s=>{
+    const ring=sensorRings[s.id], st=sensorStates[s.id];
+    if(st==='fault'){const sc=1+0.4*Math.abs(Math.sin(t*3+SENSORS.indexOf(s)));ring.scale.set(sc,sc,sc);ring.material.opacity=0.3+0.5*Math.abs(Math.sin(t*3));}
+    else if(st==='warn'){const sc=1+0.15*Math.abs(Math.sin(t*1.5));ring.scale.set(sc,sc,sc);ring.material.opacity=0.5+0.3*Math.abs(Math.sin(t));}
+    else{ring.scale.set(1,1,1);ring.material.opacity=0.5+0.2*Math.sin(t*0.8+SENSORS.indexOf(s));}
+    ring.lookAt(camera.position);
+    sensorMarkers[s.id].parent.rotation.setFromRotationMatrix(new THREE.Matrix4());
+    ring.rotation.x=Math.PI/2;
+  });
+  if(carLoaded) carGroup.position.y=-0.07+Math.sin(t*0.5)*0.01;
+  renderer.render(scene,camera);
+  document.getElementById('timestamp').textContent=new Date().toLocaleTimeString();
+}
+
+function hideLoader() {
+  setTimeout(()=>{
+    const l=document.getElementById('loader');
+    l.style.transition='opacity 0.8s'; l.style.opacity='0';
+    setTimeout(()=>l.remove(),800);
+  },2200);
+}
+
+window.addEventListener('resize',()=>{renderer.setSize(W(),H());camera.aspect=W()/H();camera.updateProjectionMatrix();});
+
+// ══════════════════════════════════════════════════════════════
+//  BACKEND POLLING
+// ══════════════════════════════════════════════════════════════
+const API_URL='http://localhost:5000/predict';
+async function pollBackend() {
+  try {
+    const resp=await fetch(API_URL,{method:'GET',signal:AbortSignal.timeout(2000)});
+    if(!resp.ok)return;
+    const data=await resp.json();
+    if(data.predictions) window.applyPredictions(data.predictions);
+  } catch(_){}
+}
+// Uncomment to enable live polling from your Flask backend:
+// setInterval(pollBackend, 3000);
+
+// ══════════════════════════════════════════════════════════════
+//  THEME TOGGLE
+// ══════════════════════════════════════════════════════════════
+let isDarkMode=true;
+function toggleTheme() {
+  isDarkMode=!isDarkMode;
+  document.body.classList.toggle('light-mode',!isDarkMode);
+  const bgCol=isDarkMode?0x050a12:0xf0f4f8;
+  scene.background=new THREE.Color(bgCol);
+  scene.fog=new THREE.FogExp2(bgCol,0.08);
+  ground.material.color.set(bgCol);
+  grid.material.color.set(isDarkMode?0x0a2040:0xc8d8e8);
+  ambientLight.color.set(isDarkMode?0x1a3a5c:0x8ab0cc);
+  ambientLight.intensity=isDarkMode?1.5:2.5;
+  rimLight.color.set(isDarkMode?0x00d4ff:0x0066cc);
+  document.getElementById('theme-icon').textContent  =isDarkMode?'☀️':'🌙';
+  document.getElementById('theme-label').textContent =isDarkMode?'LIGHT MODE':'DARK MODE';
+}
+
+// ══════════════════════════════════════════════════════════════
+//  CSV UPLOAD
+//
+//  Your CSV column headers must EXACTLY match these sensor IDs:
+//    engine_temp, map_sensor, o2_sensor, maf_sensor,
+//    throttle_pos, crankshaft, camshaft, knock_sensor,
+//    fuel_pressure, egr_sensor, oil_pressure, iat_sensor
+//
+//  Example file (test_data.csv):
+//    engine_temp,map_sensor,o2_sensor,maf_sensor,...
+//    90,101.3,0.45,12.0,...
+//    92,100.8,0.44,11.9,...
+//    115,98.0,0.10,9.5,...    ← last row is used as test reading
+// ══════════════════════════════════════════════════════════════
+function handleCsvFile(file) {
+  if (!file) return;
+
+  document.getElementById('csv-filename').textContent = '📄 ' + file.name;
+  setCsvStatus('Reading file...', 'info-msg');
+  document.getElementById('csv-debug').style.display = 'none';
+
+  const reader = new FileReader();
+
+  reader.onload = (e) => {
+    try {
+      const text = e.target.result;
+
+      // Split lines — handle Windows \r\n and Unix \n
+      const lines = text.trim().split('\n')
+        .map(l => l.replace(/\r/g,'').trim())
+        .filter(l => l.length > 0);
+
+      if (lines.length < 2) {
+        setCsvStatus('❌ CSV needs a header row + at least one data row', 'err-msg');
+        return;
+      }
+
+      // Parse headers — strip BOM, quotes, whitespace
+      const headers = lines[0].split(',').map(h =>
+        h.trim().replace(/^\uFEFF/,'').replace(/^["']|["']$/g,'').trim()
+      );
+
+      // Store ALL data rows for graph display
+      csvAllRows = [];
+      for (let r = 1; r < lines.length; r++) {
+        const vals = lines[r].split(',').map(v => v.trim().replace(/^["']|["']$/g,''));
+        if (vals.length !== headers.length) continue;
+        const obj = {};
+        headers.forEach((h,i) => { obj[h] = vals[i]; });
+        csvAllRows.push(obj);
+      }
+
+      if (csvAllRows.length === 0) {
+        setCsvStatus('❌ No valid data rows found after header', 'err-msg');
+        return;
+      }
+
+      // Use LAST row as the current test reading (most recent measurement)
+      const lastRow = csvAllRows[csvAllRows.length - 1];
+
+      // Build sensorData object — numeric values only
+      const sensorData = {};
+      headers.forEach(h => {
+        const v = parseFloat(lastRow[h]);
+        if (!isNaN(v)) sensorData[h] = v;
+      });
+
+      // Report matched / unmatched columns
+      const knownIds  = SENSORS.map(s => s.id);
+      const matched   = headers.filter(h => knownIds.includes(h));
+      const unmatched = headers.filter(h => !knownIds.includes(h));
+
+      const dbg = document.getElementById('csv-debug');
+      dbg.style.display = 'block';
+      dbg.innerHTML =
+        `<span style="color:var(--ok)">✓ Matched (${matched.length}):</span> ${matched.join(', ')||'none'}<br>` +
+        (unmatched.length ? `<span style="color:var(--warn)">⚠ Unknown: </span>${unmatched.join(', ')}<br>` : '') +
+        `<span style="color:var(--dim)">Rows: ${csvAllRows.length} | Using: last row</span>`;
+
+      if (matched.length === 0) {
+        setCsvStatus('❌ No matching sensor IDs found in CSV headers', 'err-msg');
+        return;
+      }
+
+      setCsvStatus(`⏳ Processing ${matched.length} sensors...`, 'info-msg');
+      sendCsvToBackend(sensorData, file.name);
+
+    } catch (err) {
+      setCsvStatus('❌ Parse error: ' + err.message, 'err-msg');
+    }
+  };
+
+  reader.onerror = () => setCsvStatus('❌ Could not read file', 'err-msg');
+  reader.readAsText(file);
+}
+
+async function sendCsvToBackend(sensorData, filename) {
+  // Try Flask backend first
+  try {
+    const resp = await fetch('http://localhost:5000/run_prediction', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ sensor_data: sensorData }),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!resp.ok) throw new Error('Server '+resp.status);
+    const data = await resp.json();
+    if (data.predictions && data.predictions.length > 0) {
+      window.applyPredictions(data.predictions);
+      const faults = data.predictions.filter(p=>p.status==='fault').length;
+      const warns  = data.predictions.filter(p=>p.status==='warn').length;
+      setCsvStatus(
+        faults>0 ? `⚠ ${faults} FAULT(S) · ${warns} WARN(S) detected` : `✓ All sensors nominal`,
+        faults>0 ? 'err-msg' : 'ok-msg'
+      );
+      return;
+    }
+  } catch (_) { /* Flask not running — use offline mode below */ }
+
+  // Offline mode: simple threshold logic
+  const predictions = SENSORS.map(s => {
+    const cur = sensorData[s.id];
+    if (cur === undefined) return { sensorId:s.id, status:'ok', curVal:s.refVal, anomalyScore:0.0 };
+    const deviation = Math.abs(cur - s.refVal) / (Math.abs(s.refVal) || 1);
+    const score     = Math.min(deviation, 1.0);
+    const status    = score>0.5?'fault':score>0.2?'warn':'ok';
+    return { sensorId:s.id, status, curVal:cur, anomalyScore:+score.toFixed(4) };
+  });
+  window.applyPredictions(predictions);
+  const faults=predictions.filter(p=>p.status==='fault').length;
+  const warns =predictions.filter(p=>p.status==='warn').length;
+  setCsvStatus(
+    faults>0 ? `⚡ Offline · ⚠ ${faults} FAULT(S) · ${warns} WARN(S)` : `⚡ Offline · ✓ All sensors nominal`,
+    faults>0 ? 'err-msg' : 'ok-msg'
+  );
+}
+
+function setCsvStatus(msg, cls) {
+  const el=document.getElementById('csv-status');
+  el.textContent=msg; el.className=cls;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  TRANSPARENCY SLIDER
+// ══════════════════════════════════════════════════════════════
+function updateCarOpacity(val) {
+  document.getElementById('opacity-val').textContent=val+'%';
+  document.getElementById('opacity-slider').style.background=
+    `linear-gradient(to right,var(--accent) 0%,var(--accent) ${val}%,var(--border) ${val}%)`;
+  carBodyMaterials.forEach(mat => { mat.opacity=val/100; });
+}
+
+// ══════════════════════════════════════════════════════════════
+//  SENSOR GRAPH MODAL
+// ══════════════════════════════════════════════════════════════
+function openGraphModal(sensorId) {
+  const s=SENSORS.find(x=>x.id===sensorId); if(!s) return;
+  const st=sensorStates[s.id], score=s.anomalyScore||0;
+
+  document.getElementById('graph-modal-title').textContent=`${s.icon}  ${s.name.toUpperCase()}`;
+  document.getElementById('graph-modal-desc').textContent =s.description;
+
+  const curEl=document.getElementById('gm-cur');
+  curEl.textContent=`${s.curVal} ${s.unit}`; curEl.className=`gm-value ${st}`;
+  document.getElementById('gm-ref').textContent=`${s.refVal} ${s.unit}`;
+  document.getElementById('gm-ref').className='gm-value';
+  const stEl=document.getElementById('gm-status'); stEl.textContent=st.toUpperCase(); stEl.className=`gm-value ${st}`;
+  const scEl=document.getElementById('gm-score');  scEl.textContent=(score*100).toFixed(1)+'%'; scEl.className=`gm-value ${st}`;
+
+  const pct=Math.round(score*100);
+  document.getElementById('gm-score-pct').textContent=pct+'%';
+  const fill=document.getElementById('anomaly-bar-fill');
+  fill.style.width=pct+'%';
+  fill.style.background=st==='ok'?'var(--ok)':st==='fault'?'var(--fault)':'var(--warn)';
+
+  document.getElementById('graph-modal').classList.add('open');
+  setTimeout(()=>drawSensorGraph(s,st),30);
+}
+
+function closeGraphModal() { document.getElementById('graph-modal').classList.remove('open'); }
+document.getElementById('graph-modal').addEventListener('click',function(e){if(e.target===this)closeGraphModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeGraphModal();});
+
+function drawSensorGraph(s, status) {
+  const canvas=document.getElementById('graph-canvas');
+  const wrap  =document.getElementById('graph-canvas-wrap');
+  canvas.width=wrap.clientWidth; canvas.height=220;
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const CW=canvas.width,CH=canvas.height;
+  const PAD={top:20,right:20,bottom:32,left:52};
+  const plotW=CW-PAD.left-PAD.right, plotH=CH-PAD.top-PAD.bottom;
+
+  // Build data series
+  let series=[];
+  if(csvAllRows.length>1){
+    csvAllRows.forEach(row=>{const v=parseFloat(row[s.id]);if(!isNaN(v))series.push(v);});
+  }
+  if(series.length<4){
+    const noise=Math.abs(s.refVal)*0.08||2; let cur=s.refVal;
+    for(let i=0;i<40;i++){cur+=(Math.random()-0.5)*noise;series.push(cur);}
+    series[series.length-1]=s.curVal;
+  }
+  const N=series.length, ref=Array(N).fill(s.refVal);
+  const all=[...series,s.refVal];
+  let yMin=Math.min(...all),yMax=Math.max(...all);
+  const mg=(yMax-yMin)*0.25||Math.abs(s.refVal)*0.15||1;
+  yMin-=mg; yMax+=mg;
+  const toX=i=>PAD.left+(i/(N-1))*plotW;
+  const toY=v=>PAD.top+plotH-((v-yMin)/(yMax-yMin))*plotH;
+
+  // Grid
+  ctx.strokeStyle='rgba(255,255,255,0.05)'; ctx.lineWidth=1;
+  for(let g=0;g<=4;g++){const y=PAD.top+(g/4)*plotH;ctx.beginPath();ctx.moveTo(PAD.left,y);ctx.lineTo(PAD.left+plotW,y);ctx.stroke();}
+
+  // Fault threshold band
+  const tv=s.refVal*1.15;
+  if(tv<yMax){
+    const ty=toY(tv);
+    ctx.fillStyle='rgba(255,51,85,0.07)'; ctx.fillRect(PAD.left,PAD.top,plotW,ty-PAD.top);
+    ctx.strokeStyle='rgba(255,51,85,0.4)'; ctx.setLineDash([5,4]); ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(PAD.left,ty);ctx.lineTo(PAD.left+plotW,ty);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle='rgba(255,51,85,0.7)';ctx.font='9px Orbitron,monospace';
+    ctx.fillText('FAULT THRESHOLD',PAD.left+4,ty-4);
+  }
+
+  // Reference line
+  ctx.strokeStyle='rgba(0,212,255,0.45)'; ctx.lineWidth=1.5; ctx.setLineDash([6,4]);
+  ctx.beginPath(); ref.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v))); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Actual line + gradient fill
+  const lc=status==='ok'?'#00ff88':status==='fault'?'#ff3355':'#ffaa00';
+  const r2=parseInt(lc.slice(1,3),16),g2=parseInt(lc.slice(3,5),16),b2=parseInt(lc.slice(5,7),16);
+  const grad=ctx.createLinearGradient(0,PAD.top,0,PAD.top+plotH);
+  grad.addColorStop(0,`rgba(${r2},${g2},${b2},0.3)`); grad.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.beginPath(); series.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v)));
+  ctx.lineTo(toX(N-1),PAD.top+plotH); ctx.lineTo(toX(0),PAD.top+plotH); ctx.closePath();
+  ctx.fillStyle=grad; ctx.fill();
+  ctx.strokeStyle=lc; ctx.lineWidth=2; ctx.lineJoin='round';
+  ctx.beginPath(); series.forEach((v,i)=>i===0?ctx.moveTo(toX(i),toY(v)):ctx.lineTo(toX(i),toY(v))); ctx.stroke();
+
+  // Last point dot
+  ctx.beginPath(); ctx.arc(toX(N-1),toY(series[N-1]),5,0,Math.PI*2);
+  ctx.fillStyle=lc; ctx.fill(); ctx.strokeStyle='#050a12'; ctx.lineWidth=2; ctx.stroke();
+
+  // Y labels
+  ctx.fillStyle='rgba(150,180,200,0.7)'; ctx.font='9px Rajdhani,sans-serif'; ctx.textAlign='right';
+  for(let g=0;g<=4;g++){const v=yMin+((4-g)/4)*(yMax-yMin),y=PAD.top+(g/4)*plotH;ctx.fillText(v.toFixed(1),PAD.left-6,y+3);}
+
+  // X labels
+  ctx.textAlign='center'; ctx.fillStyle='rgba(150,180,200,0.5)'; ctx.font='8px Rajdhani,sans-serif';
+  const xs=Math.min(6,N-1);
+  for(let i=0;i<=xs;i++){const idx=Math.round((i/xs)*(N-1));ctx.fillText(`t-${N-1-idx}`,toX(idx),CH-PAD.bottom+14);}
+
+  // Y unit label
+  ctx.save(); ctx.translate(12,PAD.top+plotH/2); ctx.rotate(-Math.PI/2);
+  ctx.fillStyle='rgba(0,212,255,0.5)'; ctx.font='9px Orbitron,monospace'; ctx.textAlign='center';
+  ctx.fillText(s.unit,0,0); ctx.restore();
+}
+
+// ── BOOT ──
+loadCarModel();
+animate();
+</script>
+</body>
+</html>
