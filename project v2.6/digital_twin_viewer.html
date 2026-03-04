@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Engine Digital Twin — Sensor Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;600&family=Share+Tech+Mono&display=swap');
+
+/* ── DARK MODE (default) — bg lightened so 3-D car is visible ── */
+:root{
+  --bg:#0d1520;
+  --panel:#0f1e30;
+  --border:#1e4060;
+  --accent:#00d4ff;
+  --ok:#00c96b;
+  --fault:#ff3355;
+  --warn:#ffaa00;
+  --text:#c8dff0;
+  --dim:#4a6a8a;
+  --logo-twin:#e0f0ff;   /* bright so "TWIN" is readable on dark bg */
+}
+/* ── LIGHT MODE ── */
+body.light-mode{
+  --bg:#f0f4f8;
+  --panel:#ffffff;
+  --border:#ccd8e8;
+  --accent:#0077cc;
+  --ok:#00a855;
+  --fault:#e0002e;
+  --warn:#d48000;
+  --text:#1a2a3a;
+  --dim:#7a90a8;
+  --logo-twin:#1a2a3a;   /* dark so "TWIN" is readable on light bg */
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:'Rajdhani',sans-serif;overflow:hidden;height:100vh;width:100vw;}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,212,255,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,212,255,0.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;}
+body.light-mode::before{background-image:linear-gradient(rgba(0,119,204,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,119,204,0.04) 1px,transparent 1px);}
+::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* PAGE SYSTEM */
+.page{display:none;position:fixed;inset:0;overflow:hidden;}.page.active{display:block;}
+
+/* TOP BAR */
+#topbar{position:fixed;top:0;left:0;right:0;height:54px;background:linear-gradient(180deg,rgba(13,21,32,0.99),rgba(13,21,32,0.75));border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 18px;z-index:200;}
+body.light-mode #topbar{background:linear-gradient(180deg,rgba(240,244,248,0.99),rgba(240,244,248,0.85));}
+/* ENGINE in accent colour; TWIN uses --logo-twin (adapts per theme) */
+.logo{font-family:'Orbitron',monospace;font-size:13px;font-weight:900;color:var(--accent);letter-spacing:3px;white-space:nowrap;}
+.logo span{color:var(--logo-twin);}
+
+.nav-tabs{display:flex;gap:0;background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:6px;overflow:hidden;}
+.nav-tab{font-family:'Orbitron',monospace;font-size:9px;letter-spacing:2px;padding:7px 16px;background:transparent;border:none;border-right:1px solid var(--border);color:var(--dim);cursor:pointer;transition:all 0.2s;font-weight:700;}
+.nav-tab:last-child{border-right:none;}.nav-tab:hover{color:var(--text);background:rgba(0,212,255,0.07);}.nav-tab.active{color:var(--accent);background:rgba(0,212,255,0.12);}
+.tb-right{display:flex;align-items:center;gap:10px;}
+.status-pill{display:flex;align-items:center;gap:6px;padding:4px 11px;border-radius:20px;border:1px solid;font-family:'Orbitron',monospace;font-size:9px;}
+.status-pill.ok{border-color:var(--ok);color:var(--ok);}.status-pill.fault{border-color:var(--fault);color:var(--fault);}.status-pill.warn{border-color:var(--warn);color:var(--warn);}
+.pulse-dot{width:7px;height:7px;border-radius:50%;animation:blink 1.2s ease-in-out infinite;}
+.ok .pulse-dot{background:var(--ok);}.fault .pulse-dot{background:var(--fault);}.warn .pulse-dot{background:var(--warn);}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
+#timestamp{font-family:'Orbitron',monospace;font-size:10px;color:var(--dim);}
+#theme-toggle{display:flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text);font-family:'Orbitron',monospace;font-size:9px;cursor:pointer;transition:all 0.2s;}
+#theme-toggle:hover{border-color:var(--accent);color:var(--accent);}
+
+/* PAGE 1 */
+#canvas-container{position:absolute;inset:0;}canvas.three{display:block;}
+#left-panel{position:fixed;top:56px;left:0;bottom:0;width:272px;background:rgba(15,28,46,0.95);border-right:1px solid var(--border);overflow-y:auto;z-index:50;padding:14px;backdrop-filter:blur(12px);}
+body.light-mode #left-panel{background:rgba(255,255,255,0.96);}
+.panel-title{font-family:'Orbitron',monospace;font-size:9px;letter-spacing:3px;color:var(--accent);text-transform:uppercase;margin-bottom:12px;padding-bottom:7px;border-bottom:1px solid var(--border);}
+.sensor-item{display:flex;align-items:center;gap:9px;padding:9px 11px;margin-bottom:5px;border-radius:6px;border:1px solid var(--border);cursor:pointer;transition:all 0.2s;position:relative;overflow:hidden;}
+.sensor-item::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;transition:background 0.3s;}
+.sensor-item.ok::before{background:var(--ok);}.sensor-item.fault::before{background:var(--fault);}.sensor-item.warn::before{background:var(--warn);}
+.sensor-item:hover{border-color:var(--accent);background:rgba(0,212,255,0.05);}
+.sensor-item.fault{background:rgba(255,51,85,0.08);border-color:rgba(255,51,85,0.4);animation:faultPulse 2s ease-in-out infinite;}
+@keyframes faultPulse{0%,100%{box-shadow:none}50%{box-shadow:0 0 12px rgba(255,51,85,0.3)}}
+.sensor-icon{width:30px;height:30px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+.sensor-item.ok .sensor-icon{background:rgba(0,255,136,0.12);}.sensor-item.fault .sensor-icon{background:rgba(255,51,85,0.15);}.sensor-item.warn .sensor-icon{background:rgba(255,170,0,0.12);}
+.sensor-info{flex:1;min-width:0;}.sensor-name{font-size:11px;font-weight:600;letter-spacing:0.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sensor-val{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--dim);margin-top:2px;}
+.sensor-badge{font-family:'Orbitron',monospace;font-size:7px;letter-spacing:1px;padding:2px 6px;border-radius:10px;font-weight:700;}
+.badge-ok{background:rgba(0,255,136,0.15);color:var(--ok);}.badge-fault{background:rgba(255,51,85,0.2);color:var(--fault);}.badge-warn{background:rgba(255,170,0,0.15);color:var(--warn);}
+#right-panel{position:fixed;top:54px;right:0;bottom:0;width:272px;background:rgba(15,28,46,0.95);border-left:1px solid var(--border);z-index:50;padding:14px;backdrop-filter:blur(12px);display:flex;flex-direction:column;gap:12px;overflow-y:auto;}
+body.light-mode #right-panel{background:rgba(255,255,255,0.96);}
+.stat-block{background:rgba(0,212,255,0.04);border:1px solid var(--border);border-radius:8px;padding:12px;flex-shrink:0;}
+.stat-label{font-family:'Orbitron',monospace;font-size:8px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin-bottom:7px;}
+.stat-value{font-family:'Orbitron',monospace;font-size:26px;font-weight:900;color:var(--accent);line-height:1;}
+.stat-value.danger{color:var(--fault);}.stat-sub{font-size:11px;color:var(--dim);margin-top:4px;}
+.bar-container{margin-top:8px;height:4px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden;}
+.bar-fill{height:100%;border-radius:2px;transition:width 0.5s,background 0.5s;}
+#health-ring-wrap{display:flex;align-items:center;justify-content:center;padding:6px 0;}
+svg.ring text{font-family:'Orbitron',monospace;fill:var(--accent);}
+.sim-btn{width:100%;padding:9px;border-radius:6px;border:1px solid;font-family:'Orbitron',monospace;font-size:9px;letter-spacing:2px;cursor:pointer;transition:all 0.2s;font-weight:700;margin-bottom:7px;text-transform:uppercase;background:transparent;}
+.sim-btn.clear{border-color:var(--ok);color:var(--ok);}.sim-btn.clear:hover{background:rgba(0,255,136,0.12);}
+.sim-btn.upload-btn{border-color:var(--accent);color:var(--accent);background:rgba(0,212,255,0.07);}.sim-btn.upload-btn:hover{background:rgba(0,212,255,0.14);}
+#csv-panel{border:1px dashed var(--border);border-radius:8px;padding:11px;background:rgba(0,212,255,0.02);}
+#csv-file-input{display:none;}
+#csv-filename{font-size:9px;color:var(--dim);text-align:center;margin-bottom:3px;font-family:'Share Tech Mono',monospace;word-break:break-all;}
+#csv-status{font-size:9px;text-align:center;margin-top:5px;min-height:14px;font-family:'Orbitron',monospace;letter-spacing:0.5px;transition:color 0.3s;word-break:break-word;}
+#csv-status.ok-msg{color:var(--ok);}#csv-status.err-msg{color:var(--fault);}#csv-status.info-msg{color:var(--accent);}
+#csv-debug{font-size:8px;color:var(--dim);margin-top:5px;line-height:1.6;display:none;word-break:break-word;}
+#opacity-slider{flex:1;-webkit-appearance:none;height:4px;border-radius:2px;outline:none;cursor:pointer;background:linear-gradient(to right,var(--accent) 0%,var(--accent) 55%,var(--border) 55%);}
+#opacity-slider::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);box-shadow:0 0 5px rgba(0,212,255,0.5);cursor:pointer;}
+#opacity-val{font-family:'Orbitron',monospace;font-size:9px;color:var(--accent);min-width:30px;text-align:right;}
+
+/* LOADER */
+#loader{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:1000;gap:16px;}
+#loader .l-title{font-family:'Orbitron',monospace;font-size:14px;letter-spacing:4px;color:var(--accent);}
+.loader-bar{width:200px;height:2px;background:var(--border);border-radius:1px;overflow:hidden;}
+.loader-fill{height:100%;width:0;background:var(--accent);animation:load 2.5s ease forwards;}
+@keyframes load{to{width:100%}}
+#loader .l-sub{font-size:11px;color:var(--dim);letter-spacing:2px;}
+
+/* TOOLTIP */
+#tooltip{position:fixed;background:rgba(13,21,32,0.97);border:1px solid var(--accent);border-radius:8px;padding:11px 15px;pointer-events:none;z-index:300;min-width:170px;display:none;backdrop-filter:blur(8px);box-shadow:0 0 20px rgba(0,212,255,0.15);}
+.tt-name{font-family:'Orbitron',monospace;font-size:10px;font-weight:700;color:var(--accent);letter-spacing:1px;margin-bottom:5px;}
+.tt-row{display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px;color:var(--dim);}.tt-row span:last-child{color:var(--text);}
+
+/* BOTTOM BAR */
+#bottombar{position:fixed;bottom:0;left:272px;right:272px;height:44px;background:rgba(13,21,32,0.97);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 20px;z-index:100;font-size:10px;letter-spacing:1px;}
+body.light-mode #bottombar{background:rgba(240,244,248,0.97);}
+.hint{color:var(--dim);}.hint kbd{background:var(--panel);border:1px solid var(--border);padding:1px 5px;border-radius:3px;font-family:'Orbitron',monospace;font-size:8px;color:var(--accent);}
+
+/* GRAPH MODAL */
+#graph-modal{position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:500;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px);}
+#graph-modal.open{display:flex;}
+#graph-box{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:22px;width:min(840px,94vw);max-height:92vh;overflow-y:auto;box-shadow:0 0 48px rgba(0,212,255,0.12);position:relative;animation:modalIn 0.22s ease;}
+@keyframes modalIn{from{opacity:0;transform:scale(0.96) translateY(12px)}to{opacity:1;transform:none}}
+#graph-modal-title{font-family:'Orbitron',monospace;font-size:13px;font-weight:900;color:var(--accent);letter-spacing:2px;margin-bottom:3px;}
+#graph-modal-desc{font-size:11px;color:var(--dim);margin-bottom:14px;}
+#graph-close{position:absolute;top:14px;right:14px;background:transparent;border:1px solid var(--border);color:var(--text);font-size:16px;width:30px;height:30px;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;}
+#graph-close:hover{border-color:var(--fault);color:var(--fault);}
+.graph-meta-row{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:16px;}
+.graph-meta-cell{background:rgba(0,212,255,0.04);border:1px solid var(--border);border-radius:7px;padding:9px 11px;text-align:center;}
+.gm-label{font-family:'Orbitron',monospace;font-size:7px;letter-spacing:1.5px;color:var(--dim);text-transform:uppercase;margin-bottom:4px;}
+.gm-value{font-family:'Orbitron',monospace;font-size:14px;font-weight:900;color:var(--accent);}
+.gm-value.fault{color:var(--fault);}.gm-value.warn{color:var(--warn);}.gm-value.ok{color:var(--ok);}
+#chart-container{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:rgba(0,0,0,0.25);margin-bottom:12px;height:320px;position:relative;}
+#chart-container canvas{position:absolute;inset:0;width:100%!important;height:100%!important;}
+.graph-legend-row{display:flex;gap:14px;align-items:center;font-size:11px;color:var(--dim);padding:0 3px;flex-wrap:wrap;}
+.legend-swatch{display:inline-block;width:22px;height:3px;margin-right:4px;vertical-align:middle;}
+.legend-patch{display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle;}
+.no-ref-msg{font-family:'Orbitron',monospace;font-size:9px;color:var(--warn);letter-spacing:1px;text-align:center;padding:9px;background:rgba(255,170,0,0.07);border:1px solid rgba(255,170,0,0.2);border-radius:6px;margin-bottom:10px;}
+.anomaly-bar-wrap{margin-top:12px;}.anomaly-bar-label{display:flex;justify-content:space-between;font-family:'Orbitron',monospace;font-size:8px;letter-spacing:1px;color:var(--dim);margin-bottom:5px;}
+.anomaly-bar-track{height:7px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden;}
+.anomaly-bar-fill{height:100%;border-radius:4px;transition:width 0.6s,background 0.4s;}
+
+/* PAGE 2 */
+#ref-page{background:var(--bg);padding-top:54px;}
+#ref-page.active{display:flex;flex-direction:column;}
+#ref-topbar-ext{display:flex;align-items:center;justify-content:space-between;padding:12px 22px 8px;flex-shrink:0;border-bottom:1px solid var(--border);}
+.ref-page-title{font-family:'Orbitron',monospace;font-size:12px;letter-spacing:3px;color:var(--accent);font-weight:700;}
+#db-stats-bar{display:flex;gap:8px;}
+.dbs-cell{background:rgba(0,212,255,0.04);border:1px solid var(--border);border-radius:6px;padding:6px 12px;text-align:center;}
+.dbs-label{font-family:'Orbitron',monospace;font-size:7px;letter-spacing:1.5px;color:var(--dim);text-transform:uppercase;}
+.dbs-val{font-family:'Orbitron',monospace;font-size:15px;font-weight:900;color:var(--accent);margin-top:2px;}
+#ref-body{display:flex;flex:1;overflow:hidden;}
+
+/* Left panel — slightly wider + larger bucket labels */
+#ref-left{width:320px;flex-shrink:0;background:rgba(10,22,40,0.7);border-right:1px solid var(--border);padding:16px 14px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;}
+body.light-mode #ref-left{background:rgba(255,255,255,0.8);}
+#ref-left .section-label{font-family:'Orbitron',monospace;font-size:8px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin-bottom:4px;}
+.mile-bucket{border:1px solid var(--border);border-radius:7px;overflow:hidden;background:rgba(0,0,0,0.15);}
+.mile-bucket-header{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:rgba(0,212,255,0.04);cursor:pointer;transition:background 0.2s;}
+.mile-bucket-header:hover{background:rgba(0,212,255,0.09);}
+.mbh-label{font-family:'Orbitron',monospace;font-size:9px;letter-spacing:1.5px;color:var(--accent);font-weight:700;}/* was 8px */
+.mbh-badge{font-family:'Orbitron',monospace;font-size:8px;padding:2px 8px;border-radius:10px;}
+.mbh-badge.has-data{background:rgba(0,201,107,0.15);color:var(--ok);}
+.mbh-badge.no-data{background:rgba(74,106,138,0.2);color:var(--dim);}
+.mile-bucket-body{padding:10px 11px;display:none;border-top:1px solid var(--border);}
+.mile-bucket-body.open{display:block;}
+.ref-file-list{margin-bottom:7px;display:flex;flex-direction:column;gap:3px;}
+.ref-file-item{display:flex;align-items:center;justify-content:space-between;background:rgba(0,212,255,0.04);border:1px solid var(--border);border-radius:5px;padding:5px 8px;}
+.rfi-name{font-family:'Share Tech Mono',monospace;font-size:8px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:165px;}
+.rfi-rows{font-size:8px;color:var(--ok);font-family:'Orbitron',monospace;white-space:nowrap;}
+.rfi-del{background:transparent;border:none;color:var(--fault);cursor:pointer;font-size:11px;padding:0 3px;opacity:0.7;}.rfi-del:hover{opacity:1;}
+.no-files-msg{font-size:9px;color:var(--dim);text-align:center;padding:3px;font-style:italic;}
+.ref-upload-label{display:flex;align-items:center;justify-content:center;gap:6px;padding:7px;border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-family:'Orbitron',monospace;font-size:7px;letter-spacing:1.5px;color:var(--accent);transition:all 0.2s;text-align:center;}
+.ref-upload-label:hover{border-color:var(--accent);background:rgba(0,212,255,0.07);}
+.ref-upload-input{display:none;}
+
+#ref-right{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:14px;}
+#env-sensor-selector{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-shrink:0;flex-wrap:wrap;}
+.env-sel-label{font-family:'Orbitron',monospace;font-size:8px;letter-spacing:2px;color:var(--dim);}
+#env-sensor-select{background:var(--panel);border:1px solid var(--border);color:var(--text);font-family:'Rajdhani',sans-serif;font-size:12px;padding:5px 10px;border-radius:5px;outline:none;cursor:pointer;}
+
+/* Mileage filter buttons — slightly bigger than original */
+.mile-filter-btns{display:flex;gap:5px;flex-wrap:wrap;}
+.mfb{font-family:'Orbitron',monospace;font-size:8px;letter-spacing:0.5px;padding:5px 9px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--dim);cursor:pointer;transition:all 0.2s;white-space:nowrap;}/* was 7px / 4px 7px */
+.mfb:hover{border-color:var(--accent);color:var(--accent);}
+.mfb.active{border-color:var(--accent);color:var(--accent);background:rgba(0,212,255,0.1);}
+.mfb.has-data{border-color:rgba(0,201,107,0.4);color:var(--ok);}
+.mfb.active.has-data{background:rgba(0,201,107,0.12);}
+
+/* Anim speed control (old-style) */
+#anim-speed-wrap{display:flex;align-items:center;gap:8px;margin-left:10px;}
+#anim-speed-slider{width:90px;-webkit-appearance:none;height:4px;border-radius:2px;outline:none;cursor:pointer;background:linear-gradient(to right,var(--accent) 0%,var(--accent) 38%,var(--border) 38%);}
+#anim-speed-slider::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);cursor:pointer;}
+#anim-speed-val{font-family:'Orbitron',monospace;font-size:9px;color:var(--accent);min-width:52px;}
+
+#env-chart-area{flex:1;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,0.25);position:relative;min-height:0;overflow:hidden;}
+#env-chart-area canvas{position:absolute;inset:0;width:100%!important;height:100%!important;}
+#env-no-data-msg{display:none;position:absolute;inset:0;align-items:center;justify-content:center;flex-direction:column;gap:8px;}
+#env-no-data-msg.show{display:flex;}
+.ndm-title{font-family:'Orbitron',monospace;font-size:12px;color:var(--dim);letter-spacing:2px;}
+.ndm-sub{font-size:11px;color:var(--dim);text-align:center;max-width:300px;}
+</style>
+</head>
+<body>
+
+<!-- LOADER -->
+<div id="loader">
+  <div class="l-title">INITIALIZING DIGITAL TWIN</div>
+  <div class="loader-bar"><div class="loader-fill"></div></div>
+  <div class="l-sub">LOADING ENGINE SENSOR ARRAY...</div>
+</div>
+
+<!-- TOP BAR (always visible) -->
+<div id="topbar">
+  <div class="logo">ENGINE<span>TWIN</span> · PREDICTIVE MONITOR</div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" id="tab-monitor" onclick="switchPage('monitor')">⬡ MONITOR</button>
+    <button class="nav-tab" id="tab-ref" onclick="switchPage('ref')">◎ REFERENCE ENVELOPES</button>
+  </div>
+  <div class="tb-right">
+    <div class="status-pill ok" id="sys-status-pill"><div class="pulse-dot"></div><span id="sys-status-text">ALL SYSTEMS OK</span></div>
+    <button id="theme-toggle" onclick="toggleTheme()"><span id="theme-icon">☀️</span>&nbsp;<span id="theme-label">LIGHT MODE</span></button>
+    <div id="timestamp">--:--:--</div>
+  </div>
+</div>
+
+<!-- ═══════════ PAGE 1: MONITOR ═══════════ -->
+<div class="page active" id="page-monitor">
+  <div id="left-panel">
+    <div class="panel-title">⬡ Sensor Array</div>
+    <div id="sensor-list"></div>
+  </div>
+  <div id="canvas-container"></div>
+  <div id="right-panel">
+    <div class="panel-title">⬡ System Health</div>
+    <div class="stat-block">
+      <div class="stat-label">Health Score</div>
+      <div id="health-ring-wrap">
+        <svg class="ring" width="108" height="108" viewBox="0 0 108 108">
+          <circle cx="54" cy="54" r="43" fill="none" stroke="rgba(0,212,255,0.1)" stroke-width="7"/>
+          <circle id="ring-circle" cx="54" cy="54" r="43" fill="none" stroke="var(--ok)" stroke-width="7"
+            stroke-dasharray="270.18" stroke-dashoffset="0" stroke-linecap="round"
+            transform="rotate(-90 54 54)" style="transition:stroke-dashoffset 0.8s,stroke 0.5s"/>
+          <text x="54" y="49" text-anchor="middle" font-size="20" font-weight="900" id="ring-pct">100%</text>
+          <text x="54" y="63" text-anchor="middle" font-size="8" fill="#4a6a8a" letter-spacing="1">NOMINAL</text>
+        </svg>
+      </div>
+    </div>
+    <div class="stat-block"><div class="stat-label">Fault Sensors</div><div class="stat-value danger" id="stat-faults">0</div><div class="stat-sub" id="stat-fault-names">None detected</div></div>
+    <div class="stat-block"><div class="stat-label">Total Sensors</div><div class="stat-value" id="stat-total">0</div><div class="stat-sub">Monitored active</div><div class="bar-container"><div class="bar-fill" id="health-bar" style="width:100%;background:var(--ok)"></div></div></div>
+    <div class="stat-block"><div class="stat-label">Last Analysis</div><div style="font-family:'Orbitron',monospace;font-size:10px;color:var(--accent)" id="last-pred">Awaiting data...</div><div class="stat-sub" id="last-pred-time">--</div></div>
+    <div id="sim-panel">
+      <div class="panel-title" style="margin-top:6px">⬡ Test Data Upload</div>
+      <div id="csv-panel">
+        <input type="file" id="csv-file-input" accept=".csv,.xlsx,.xls" onchange="handleCsvFile(this.files[0])"/>
+        <button class="sim-btn upload-btn" onclick="document.getElementById('csv-file-input').value='';document.getElementById('csv-file-input').click();">📂 &nbsp;SELECT TEST DATA CSV</button>
+        <div id="csv-filename">No file selected</div>
+        <div id="csv-status" class="info-msg">—</div>
+        <div id="csv-debug"></div>
+      </div>
+      <div class="panel-title" style="margin-top:10px">⬡ Controls</div>
+      <!-- Clears ONLY test data; reference DB is never touched -->
+      <button class="sim-btn clear" onclick="clearAllResults()">✓ Clear Test Data &amp; Results</button>
+      <div class="panel-title" style="margin-top:8px">⬡ Model Transparency</div>
+      <div class="stat-block" style="padding:10px 13px;">
+        <div style="display:flex;align-items:center;gap:9px;">
+          <span style="font-size:10px;color:var(--dim)">Opaque</span>
+          <input type="range" id="opacity-slider" min="5" max="100" value="55" oninput="updateCarOpacity(this.value)"/>
+          <span id="opacity-val">55%</span>
+        </div>
+        <div style="font-size:9px;color:var(--dim);margin-top:3px">Lower = see-through</div>
+      </div>
+    </div>
+  </div>
+  <div id="bottombar">
+    <div class="hint"><kbd>DRAG</kbd> Rotate &nbsp;<kbd>SCROLL</kbd> Zoom &nbsp;<kbd>CLICK</kbd> Sensor detail</div>
+    <div class="hint">ENGINE DIGITAL TWIN v2.0 &nbsp;·&nbsp; PREDICTIVE MAINTENANCE</div>
+  </div>
+</div>
+
+<!-- TOOLTIP -->
+<div id="tooltip">
+  <div class="tt-name" id="tt-name">—</div>
+  <div class="tt-row"><span>Status</span><span id="tt-status">—</span></div>
+  <div class="tt-row"><span>Value</span><span id="tt-val">—</span></div>
+  <div class="tt-row"><span>Anomaly</span><span id="tt-score">—</span></div>
+</div>
+
+<!-- SENSOR GRAPH MODAL -->
+<div id="graph-modal">
+  <div id="graph-box">
+    <button id="graph-close" onclick="closeGraphModal()">✕</button>
+    <div id="graph-modal-title">—</div>
+    <div id="graph-modal-desc">—</div>
+    <div class="graph-meta-row">
+      <div class="graph-meta-cell"><div class="gm-label">Current Value</div><div class="gm-value" id="gm-cur">—</div></div>
+      <div class="graph-meta-cell"><div class="gm-label">Ref Mean</div><div class="gm-value" id="gm-ref">—</div></div>
+      <div class="graph-meta-cell"><div class="gm-label">Status</div><div class="gm-value" id="gm-status">—</div></div>
+      <div class="graph-meta-cell"><div class="gm-label">Anomaly Score</div><div class="gm-value" id="gm-score">—</div></div>
+    </div>
+    <div id="no-ref-banner" class="no-ref-msg" style="display:none">⚠ No reference envelope for this mileage range — upload reference data on the Reference Envelopes page.</div>
+    <div id="chart-container"><canvas id="graph-canvas"></canvas></div>
+    <div class="graph-legend-row" style="margin-bottom:10px">
+      <span><span class="legend-patch" style="background:rgba(0,201,107,0.2);border:1px solid rgba(0,201,107,0.5)"></span>Healthy Envelope ±1σ</span>
+      <span><span class="legend-swatch" style="background:#00c96b;opacity:0.8"></span>Healthy Mean</span>
+      <span><span class="legend-swatch" style="background:#ff5533"></span>Test Vehicle (binned mean)</span>
+      <span><span class="legend-swatch" style="background:#ff5533; width:10px; height:10px; border-radius:50%;display:inline-block;vertical-align:middle;"></span>Raw Test Data</span>
+    </div>
+    <div class="anomaly-bar-wrap">
+      <div class="anomaly-bar-label"><span>ANOMALY SCORE</span><span id="gm-score-pct">0%</span></div>
+      <div class="anomaly-bar-track"><div class="anomaly-bar-fill" id="anomaly-bar-fill" style="width:0%"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ PAGE 2: REFERENCE ENVELOPES ═══════════ -->
+<div class="page" id="ref-page">
+  <div id="ref-topbar-ext">
+    <div class="ref-page-title">◎ REFERENCE ENVELOPE DATABASE</div>
+    <div id="db-stats-bar">
+      <div class="dbs-cell"><div class="dbs-label">Ref Files</div><div class="dbs-val" id="db-total-files">0</div></div>
+      <div class="dbs-cell"><div class="dbs-label">Total Rows</div><div class="dbs-val" id="db-total-rows">0</div></div>
+      <div class="dbs-cell"><div class="dbs-label">Ranges Used</div><div class="dbs-val" id="db-ranges">0/8</div></div>
+      <div class="dbs-cell"><div class="dbs-label">Sensors</div><div class="dbs-val" id="db-sensors">0</div></div>
+    </div>
+  </div>
+  <div id="ref-body">
+    <div id="ref-left">
+      <div class="section-label">MILEAGE RANGE DATABASE</div>
+      <div id="mile-bucket-list"></div>
+    </div>
+    <div id="ref-right">
+      <!-- Sensor + mileage selectors -->
+      <div id="env-sensor-selector">
+        <span class="env-sel-label">SENSOR:</span>
+        <select id="env-sensor-select" onchange="renderEnvelopeChart()"></select>
+        <span class="env-sel-label" style="margin-left:6px">RANGE:</span>
+        <div class="mile-filter-btns" id="mile-filter-btns"></div>
+        <div id="anim-speed-wrap">
+          <span class="env-sel-label">⏵ SPEED:</span>
+          <input type="range" id="anim-speed-slider" min="1" max="50" value="20" oninput="updateAnimSpeed(this.value)">
+          <span id="anim-speed-val">20 ms/pt</span>
+        </div>
+      </div>
+      <!-- Chart -->
+      <div id="env-chart-area">
+        <canvas id="env-chart"></canvas>
+        <div id="env-no-data-msg">
+          <div class="ndm-title">NO REFERENCE DATA</div>
+          <div class="ndm-sub">Upload reference CSV files using the left panel to build the healthy envelope for each mileage range.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════
+//  SENSOR DEFINITIONS — IDs match SUZUKI_Recording6
+// ══════════════════════════════════════════════════
+const SENSORS = [
+  // Engine Speed — crankshaft, geometric centre of engine block
+  { id:'Engine Speed[rpm]',               name:'Engine Speed',         icon:'⚙️', pos:[-1.2, 0.1,  -0.6], unit:'rpm',   desc:'Crankshaft rotational speed (Engine Speed)' },
+  // ECT — coolant temp sensor, top-left of engine block near hose outlet
+  { id:'ECT[degree C]',                   name:'Coolant Temp (ECT)',   icon:'🌡️',pos:[-1.3, 0.1,  -0.3], unit:'°C',    desc:'Engine coolant temperature sensor' },
+  // MAP — intake manifold, upper-centre-left of engine
+  { id:'MAP[kPa]',                        name:'MAP Sensor',           icon:'📊', pos:[-1.2, -0.2,  -0.1], unit:'kPa',   desc:'Manifold absolute pressure' },
+  // MAF — air intake duct, far-left engine bay before throttle body
+  { id:'MAF[g/s]',                        name:'MAF Sensor',           icon:'🌬️',pos:[-1.2, 0.2,  -0.1], unit:'g/s',   desc:'Mass air flow sensor' },
+  // Throttle Position — throttle body, left-centre engine top
+  { id:'Throttle Position[%]',            name:'Throttle Position',    icon:'🔧', pos:[-1.1, 0.3,  -0.1], unit:'%',     desc:'Actual throttle plate angle' },
+  // Target Throttle — same throttle body, slight vertical offset
+  { id:'Target Throttle Posi[%]',         name:'Target Throttle',      icon:'🎯', pos:[-1.2, 0.2,  -0.3], unit:'%',     desc:'ECU commanded throttle position' },
+  // Calculated Load — ECU dashboard data, lower-right interior
+  { id:'Calculated Load[%]',              name:'Calculated Load',      icon:'🚘', pos:[-1.0, -0.2,  0.0], unit:'%',     desc:'ECU calculated engine load' },
+  // O2S B1 S1 — upstream oxygen sensor on exhaust manifold, right underside
+  { id:'O2S B1 S1[V]',                    name:'O₂ Sensor S1',         icon:'💨', pos:[-1.2, -0.1,  -0.6], unit:'V',     desc:'Upstream lambda/oxygen sensor (B1S1)' },
+  // O2S B1 S2 — post-cat downstream sensor, right-rear underside
+  { id:'O2S B1 S2[V]',                    name:'O₂ Sensor S2',         icon:'💨', pos:[ -1.2, -0.1,  -0.5], unit:'V',     desc:'Post-catalyst oxygen sensor (B1S2)' },
+  // Short Term Fuel Trim — ECU data, dashboard cluster
+  { id:'Short Term Fuel Trim[%]',         name:'Short Term Fuel Trim', icon:'⛽', pos:[ 0.43, -0.24, -0.50], unit:'%',     desc:'Short-term fuel correction (STFT)' },
+  // Long Term Fuel Trim — ECU data, dashboard cluster
+  { id:'Long Term Fuel Trim[%]',          name:'Long Term Fuel Trim',  icon:'⛽', pos:[ 0.43, -0.24, -0.57], unit:'%',     desc:'Long-term adaptive fuel correction (LTFT)' },
+  // Total Fuel Trim — ECU data, dashboard cluster
+  { id:'Total Fuel Trim[%]',              name:'Total Fuel Trim',      icon:'⛽', pos:[ 0.43, -0.24, -0.64], unit:'%',     desc:'Combined STFT + LTFT total fuel correction' },
+  // Injector Pulse Width — fuel injectors on intake runners, engine top-centre
+  { id:'Inj Pulse Width[ms]',             name:'Injector Pulse Width', icon:'🔩', pos:[-1.0, 0.1  -0.1], unit:'ms',    desc:'Fuel injector solenoid open duration' },
+  // Ignition Advance — ignition coils/spark plugs, engine top-centre
+  { id:'Ignition Advance[deg BTDC]',      name:'Ignition Advance',     icon:'⚡', pos:[-1.4, 0.1,  -0.1], unit:'°BTDC', desc:'Spark timing advance before top dead centre' },
+  // IAC — idle air control port on throttle body, left of engine
+  { id:'IAC Throttle Opening[%]',         name:'IAC Opening',          icon:'🌀', pos:[-1.3, 0.2,  -0.7], unit:'%',     desc:'Idle air control valve opening' },
+  // Battery Voltage — battery box, front-left corner of engine bay
+  { id:'Battery Voltage[V]',              name:'Battery Voltage',      icon:'🔋', pos:[-1.2, -0.1,  -0.5], unit:'V',     desc:'12V system battery voltage' },
+  // Battery Temperature — same battery location, slightly lower
+  { id:'Battery Temperature[degree C]',   name:'Battery Temperature',  icon:'🔋', pos:[-1.2, -0.1,  -0.2], unit:'°C',    desc:'Battery pack temperature' },
+  // Generator Field Duty — alternator, lower-left front of engine
+  { id:'Generator Field Duty[%]',         name:'Generator Field Duty', icon:'⚡', pos:[-1.2, -0.1,  -0.4], unit:'%',     desc:'Alternator field winding duty cycle' },
+  // Brake Booster — vacuum brake booster, centre-left firewall
+  { id:'Brake Booster Pressure[kPa]',     name:'Brake Booster Press',  icon:'🅱️', pos:[-1.5, -0.1,  -0.1], unit:'kPa',   desc:'Brake vacuum booster pressure' },
+  // Accelerator Position — accelerator pedal, right-front footwell
+  { id:'Accelerator Position[%]',         name:'Accelerator Position', icon:'🦶', pos:[ 0.72, -0.1, -0.4], unit:'%',     desc:'Accelerator pedal position' },
+  // APP Sensor 1 — pedal position sensor 1, right footwell
+  { id:'APP Sensor 1 Voltage[V]',         name:'APP Sensor 1 Voltage', icon:'🔌', pos:[ 0.72, 0.0, -0.20], unit:'V',     desc:'Accelerator pedal position sensor 1 voltage' },
+  // APP Sensor 2 — pedal position sensor 2, right footwell lower
+  { id:'APP Sensor 2 Voltage[V]',         name:'APP Sensor 2 Voltage', icon:'🔌', pos:[ 0.72, 0.0, -0.45], unit:'V',     desc:'Accelerator pedal position sensor 2 voltage' },
+  // TP Sensor 1 — throttle position sensor 1, throttle body
+  { id:'TP Sensor 1 Volt[V]',             name:'TP Sensor 1 Voltage',  icon:'🔌', pos:[-1.1, 0.3,  -0.2], unit:'V',     desc:'Throttle position sensor 1 voltage' },
+  // TP Sensor 2 — throttle position sensor 2, throttle body (inverted)
+  { id:'TP Sensor 2 Volt[V]',             name:'TP Sensor 2 Voltage',  icon:'🔌', pos:[-1.2, 0.3,  -0.3], unit:'V',     desc:'Throttle position sensor 2 voltage (inverted)' },
+  // EVAP Purge — canister purge solenoid, left side near firewall
+  { id:'EVAP Canist Prg Duty[%]',         name:'EVAP Purge Duty',      icon:'♻️', pos:[-1.2, -0.2,  -0.3], unit:'%',     desc:'EVAP canister purge solenoid duty' },
+  // VVT Gap Exhaust — VVT cam actuator, rear-right of engine top
+  { id:'VVT Gap B1 EX[degree CA]',        name:'VVT Gap Exhaust',      icon:'🔩', pos:[ -0.9, -0.2,  0.0], unit:'°CA',   desc:'Variable valve timing exhaust cam gap B1' },
+  // Intake Air Temp — intake air duct / airbox, far-left with MAF sensor
+  { id:'Intake Air Temperature[degree C]',name:'Intake Air Temp',      icon:'🌡️',pos:[0.36, -0.31, -0.57], unit:'°C',    desc:'Intake manifold air temperature' },
+];
+
+const MILEAGE_BUCKETS = [
+  {label:'0–5k km',        key:'0-5000',        min:0,      max:5000     },
+  {label:'5–10k km',       key:'5000-10000',    min:5000,   max:10000    },
+  {label:'10–20k km',      key:'10000-20000',   min:10000,  max:20000    },
+  {label:'20–50k km',      key:'20000-50000',   min:20000,  max:50000    },
+  {label:'50–100k km',     key:'50000-100000',  min:50000,  max:100000   },
+  {label:'100–150k km',    key:'100000-150000', min:100000, max:150000   },
+  {label:'150–200k km',    key:'150000-200000', min:150000, max:200000   },
+  {label:'200k+ km',       key:'200000+',       min:200000, max:Infinity },
+];
+
+// ── STATE ──
+let sensorStates={}, sensorMarkers={}, sensorRings={};
+let csvAllRows=[];               // test data — cleared by clearAllResults
+let currentTestMileage=50000;
+let refDB={};  MILEAGE_BUCKETS.forEach(b=>{refDB[b.key]=[];}); // reference data — NEVER cleared
+let envelopeCache={};
+let selectedEnvBucket=MILEAGE_BUCKETS[4].key;
+let modalChart=null, envChart=null;
+
+// Animation state (matching old code)
+let animFrame=null;
+let animSpeedMs=20;
+let rawPointsSorted=[];
+let currentAnimIndex=0;
+
+SENSORS.forEach(s=>{sensorStates[s.id]='ok';s.curVal=0;s.anomalyScore=0.01;});
+
+const RPM_BINS=40, RPM_MIN=600, RPM_MAX=4500;
+
+// ── PAGE SWITCHING ──
+function switchPage(page){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  if(page==='monitor'){
+    document.getElementById('page-monitor').classList.add('active');
+    document.getElementById('tab-monitor').classList.add('active');
+  } else {
+    document.getElementById('ref-page').classList.add('active');
+    document.getElementById('tab-ref').classList.add('active');
+    buildRefPage();
+  }
+}
+
+// ── THREE.JS ──
+const container=document.getElementById('canvas-container');
+const W=()=>container.clientWidth, H=()=>container.clientHeight;
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+renderer.setPixelRatio(window.devicePixelRatio); renderer.setSize(W(),H());
+renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.5;
+container.appendChild(renderer.domElement); renderer.domElement.classList.add('three');
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x0d1520);   // lighter than original 0x050a12
+scene.fog=new THREE.FogExp2(0x0d1520,0.06);    // less fog density
+
+const camera=new THREE.PerspectiveCamera(45,W()/H(),0.01,100);
+camera.position.set(0,1.5,4.5); camera.lookAt(0,0.3,0);
+
+// Brighter lights so 3-D model is clearly visible
+scene.add(new THREE.AmbientLight(0x3060a0,3.0));
+const dirL=new THREE.DirectionalLight(0x88aadd,4.5); dirL.position.set(3,5,4); dirL.castShadow=true; scene.add(dirL);
+const rimL=new THREE.DirectionalLight(0x00d4ff,2.5); rimL.position.set(-4,2,-3); scene.add(rimL);
+const fillL=new THREE.DirectionalLight(0x204060,2.0); fillL.position.set(0,-2,5); scene.add(fillL);
+scene.add(new THREE.PointLight(0x0066cc,2.0,10));
+
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(20,20),new THREE.MeshStandardMaterial({color:0x0d1520,metalness:0.8,roughness:0.3}));
+ground.rotation.x=-Math.PI/2; ground.position.y=-0.85; ground.receiveShadow=true; scene.add(ground);
+const grid=new THREE.GridHelper(20,40,0x0a2040,0x0a2040); grid.position.y=-0.84; scene.add(grid);
+let carGroup=new THREE.Group(); scene.add(carGroup); let carLoaded=false; let carBodyMats=[];
+
+function loadCarModel(){
+  const loader=new THREE.GLTFLoader();
+  loader.load('http://localhost:5000/static/car.glb',
+    gltf=>{
+      while(carGroup.children.length)carGroup.remove(carGroup.children[0]);
+      carBodyMats=[];
+      const model=gltf.scene;
+      const box=new THREE.Box3().setFromObject(model);
+      const size=new THREE.Vector3(); box.getSize(size);
+      const sc=3.8/Math.max(size.x,size.y,size.z);
+      model.scale.set(sc,sc,sc);
+      box.setFromObject(model);
+      const c=new THREE.Vector3(); box.getCenter(c); model.position.sub(c);
+      model.traverse(ch=>{
+        if(!ch.isMesh)return;
+        ch.castShadow=ch.receiveShadow=true;
+        (Array.isArray(ch.material)?ch.material:[ch.material]).forEach(m=>{
+          m.transparent=true; m.opacity=0.65; carBodyMats.push(m);
+        });
+      });
+      carGroup.add(model); carLoaded=true; buildSensorMarkers(); buildUI(); hideLoader();
+    },
+    xhr=>{const sub=document.querySelector('#loader .l-sub');if(sub)sub.textContent=`LOADING... ${Math.round((xhr.loaded/(xhr.total||1))*100)}%`;},
+    ()=>{buildSensorMarkers(); buildUI(); hideLoader();}
+  );
+}
+
+const COLORS={ok:new THREE.Color(0x00ff88),fault:new THREE.Color(0xff3355),warn:new THREE.Color(0xffaa00)};
+function buildSensorMarkers(){
+  SENSORS.forEach(s=>{
+    const grp=new THREE.Group();
+    const rm=new THREE.MeshBasicMaterial({color:COLORS.ok,transparent:true,opacity:0.7});
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(0.072,0.008,8,32),rm);grp.add(ring);sensorRings[s.id]=ring;
+    const sm=new THREE.MeshStandardMaterial({color:COLORS.ok,emissive:COLORS.ok,emissiveIntensity:0.8,metalness:0.3,roughness:0.2});
+    const sph=new THREE.Mesh(new THREE.SphereGeometry(0.045,16,16),sm);sph.userData={sensorId:s.id};grp.add(sph);sensorMarkers[s.id]=sph;
+    const lm=new THREE.LineBasicMaterial({color:COLORS.ok,transparent:true,opacity:0.4});
+    grp.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0),new THREE.Vector3(0,-0.25,0)]),lm));
+    grp.position.set(...s.pos);carGroup.add(grp);s._sm=sm;s._rm=rm;s._lm=lm;
+  });
+}
+function updateMarkerColor(id,st){const s=SENSORS.find(x=>x.id===id);if(!s)return;const c=COLORS[st];s._sm.color.set(c);s._sm.emissive.set(c);s._rm.color.set(c);s._lm.color.set(c);}
+let isDragging=false,prevMouse={x:0,y:0},theta=0,phi=Math.PI/6,radius=4.5;
+const target=new THREE.Vector3(0,0.3,0);
+renderer.domElement.addEventListener('mousedown',e=>{isDragging=true;prevMouse={x:e.clientX,y:e.clientY};});
+renderer.domElement.addEventListener('mousemove',e=>{if(!isDragging){handleHover(e);return;}theta-=(e.clientX-prevMouse.x)*0.006;phi=Math.max(0.05,Math.min(Math.PI/2.2,phi+(e.clientY-prevMouse.y)*0.004));prevMouse={x:e.clientX,y:e.clientY};});
+renderer.domElement.addEventListener('mouseup',()=>isDragging=false);
+renderer.domElement.addEventListener('wheel',e=>radius=Math.max(1.5,Math.min(10,radius+e.deltaY*0.005)));
+renderer.domElement.addEventListener('click',e=>{toNDC(e);raycaster.setFromCamera(mouse2D,camera);const h=raycaster.intersectObjects(Object.values(sensorMarkers));if(h.length){const sid=h[0].object.userData.sensorId;document.querySelectorAll('.sensor-item').forEach(el=>el.style.outline='none');const el=document.getElementById('si-'+CSS.escape(sid));if(el){el.style.outline='1px solid var(--accent)';el.scrollIntoView({behavior:'smooth',block:'nearest'});}openGraphModal(sid);}});
+renderer.domElement.addEventListener('touchstart',e=>{isDragging=true;prevMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};});
+renderer.domElement.addEventListener('touchmove',e=>{if(!isDragging)return;theta-=(e.touches[0].clientX-prevMouse.x)*0.006;phi=Math.max(0.05,Math.min(Math.PI/2.2,phi+(e.touches[0].clientY-prevMouse.y)*0.004));prevMouse={x:e.touches[0].clientX,y:e.touches[0].clientY};});
+renderer.domElement.addEventListener('touchend',()=>isDragging=false);
+function updateCamera(){camera.position.x=target.x+radius*Math.sin(theta)*Math.cos(phi);camera.position.y=target.y+radius*Math.sin(phi);camera.position.z=target.z+radius*Math.cos(theta)*Math.cos(phi);camera.lookAt(target);}
+const raycaster=new THREE.Raycaster(),mouse2D=new THREE.Vector2();
+const tooltip=document.getElementById('tooltip');
+function toNDC(e){const r=renderer.domElement.getBoundingClientRect();mouse2D.x=((e.clientX-r.left)/r.width)*2-1;mouse2D.y=-((e.clientY-r.top)/r.height)*2+1;}
+function handleHover(e){toNDC(e);raycaster.setFromCamera(mouse2D,camera);const h=raycaster.intersectObjects(Object.values(sensorMarkers));if(h.length){showTooltip(e,SENSORS.find(x=>x.id===h[0].object.userData.sensorId));renderer.domElement.style.cursor='pointer';}else{tooltip.style.display='none';renderer.domElement.style.cursor='default';}}
+function showTooltip(e,s){const st=sensorStates[s.id];document.getElementById('tt-name').textContent=s.name;document.getElementById('tt-status').textContent=st.toUpperCase();document.getElementById('tt-status').style.color=st==='ok'?'var(--ok)':st==='fault'?'var(--fault)':'var(--warn)';document.getElementById('tt-val').textContent=`${s.curVal} ${s.unit}`;document.getElementById('tt-score').textContent=(s.anomalyScore*100).toFixed(1)+'%';tooltip.style.display='block';tooltip.style.left=(e.clientX+16)+'px';tooltip.style.top=(e.clientY-20)+'px';}
+
+// ── UI BUILD ──
+function buildUI(){
+  const list=document.getElementById('sensor-list');list.innerHTML='';
+  SENSORS.forEach(s=>{const st=sensorStates[s.id];const div=document.createElement('div');div.className=`sensor-item ${st}`;div.id='si-'+s.id;
+    div.innerHTML=`<div class="sensor-icon">${s.icon}</div><div class="sensor-info"><div class="sensor-name">${s.name}</div><div class="sensor-val" id="sv-${s.id}">${s.curVal||'—'} ${s.unit}</div></div><span class="sensor-badge badge-${st}" id="sb-${s.id}">${st.toUpperCase()}</span>`;
+    div.onclick=()=>{focusSensor(s.id);openGraphModal(s.id);};list.appendChild(div);
+  });
+  document.getElementById('stat-total').textContent=SENSORS.length;updateStats();
+}
+function focusSensor(id){const s=SENSORS.find(x=>x.id===id);if(!s)return;const[x,y,z]=s.pos;target.set(x*0.4,y*0.4+0.3,z*0.4);radius=2.5;}
+function updateStats(){
+  const faults=SENSORS.filter(s=>sensorStates[s.id]==='fault');
+  const health=Math.round(((SENSORS.length-faults.length)/SENSORS.length)*100);
+  document.getElementById('stat-faults').textContent=faults.length;
+  document.getElementById('stat-fault-names').textContent=faults.length?faults.map(s=>s.name).join(', '):'None detected';
+  const ring=document.getElementById('ring-circle');ring.style.strokeDashoffset=270.18*(1-health/100);ring.style.stroke=health>80?'var(--ok)':health>50?'var(--warn)':'var(--fault)';
+  document.getElementById('ring-pct').textContent=health+'%';
+  const bar=document.getElementById('health-bar');bar.style.width=health+'%';bar.style.background=health>80?'var(--ok)':health>50?'var(--warn)':'var(--fault)';
+  document.getElementById('sys-status-pill').className='status-pill '+(faults.length?'fault':'ok');
+  document.getElementById('sys-status-text').textContent=faults.length?`${faults.length} FAULT${faults.length>1?'S':''}!`:'ALL SYSTEMS OK';
+}
+window.applyPredictions=function(predictions){
+  predictions.forEach(p=>{const s=SENSORS.find(x=>x.id===p.sensorId);if(!s)return;sensorStates[s.id]=p.status;if(p.curVal!==undefined)s.curVal=p.curVal;if(p.anomalyScore!==undefined)s.anomalyScore=p.anomalyScore;updateMarkerColor(s.id,p.status);
+    const sv=document.getElementById('sv-'+s.id);if(sv)sv.textContent=`${p.curVal??s.curVal} ${s.unit}`;
+    const sb=document.getElementById('sb-'+s.id);if(sb){sb.textContent=p.status.toUpperCase();sb.className='sensor-badge badge-'+p.status;}
+    const item=document.getElementById('si-'+s.id);if(item)item.className=`sensor-item ${p.status}`;
+  });
+  updateStats();document.getElementById('last-pred').textContent='Analysis complete';document.getElementById('last-pred-time').textContent=new Date().toLocaleTimeString();
+};
+
+// Clear ALL test results — refDB is intentionally NOT cleared
+window.clearAllResults=function(){
+  if(animFrame){cancelAnimationFrame(animFrame);animFrame=null;}
+  currentAnimIndex=0;rawPointsSorted=[];
+  csvAllRows=[];
+  SENSORS.forEach(s=>{sensorStates[s.id]='ok';s.anomalyScore=0.01;s.curVal=0;updateMarkerColor(s.id,'ok');});
+  buildUI();updateStats();
+  document.getElementById('last-pred').textContent='Cleared';
+  document.getElementById('last-pred-time').textContent=new Date().toLocaleTimeString();
+  document.getElementById('csv-filename').textContent='No file selected';
+  document.getElementById('csv-status').textContent='—';
+  document.getElementById('csv-status').className='info-msg';
+  document.getElementById('csv-debug').style.display='none';
+  target.set(0,0.3,0);radius=4.5;
+  if(document.getElementById('ref-page').classList.contains('active')) renderEnvelopeChart();
+};
+
+// ── ANIMATION LOOP (Three.js) ──
+let t=0;
+function animate(){requestAnimationFrame(animate);t+=0.016;updateCamera();
+  SENSORS.forEach((s,i)=>{const ring=sensorRings[s.id],st=sensorStates[s.id];
+    if(st==='fault'){const sc=1+0.4*Math.abs(Math.sin(t*3+i));ring.scale.set(sc,sc,sc);ring.material.opacity=0.3+0.5*Math.abs(Math.sin(t*3));}
+    else if(st==='warn'){const sc=1+0.15*Math.abs(Math.sin(t*1.5));ring.scale.set(sc,sc,sc);ring.material.opacity=0.5+0.3*Math.abs(Math.sin(t));}
+    else{ring.scale.set(1,1,1);ring.material.opacity=0.5+0.2*Math.sin(t*0.8+i);}
+    ring.lookAt(camera.position);ring.rotation.x=Math.PI/2;sensorMarkers[s.id].parent.rotation.setFromRotationMatrix(new THREE.Matrix4());
+  });
+  if(carLoaded)carGroup.position.y=-0.07+Math.sin(t*0.5)*0.01;
+  renderer.render(scene,camera);document.getElementById('timestamp').textContent=new Date().toLocaleTimeString();
+}
+function hideLoader(){setTimeout(()=>{const l=document.getElementById('loader');l.style.transition='opacity 0.8s';l.style.opacity='0';setTimeout(()=>l.remove(),800);},2000);}
+window.addEventListener('resize',()=>{renderer.setSize(W(),H());camera.aspect=W()/H();camera.updateProjectionMatrix();});
+let isDarkMode=false;
+function toggleTheme(){
+  isDarkMode=!isDarkMode;
+  document.body.classList.toggle('light-mode',!isDarkMode);
+  const bg=isDarkMode?0x0d1520:0xf0f4f8;
+  scene.background=new THREE.Color(bg);scene.fog=new THREE.FogExp2(bg,0.06);
+  ground.material.color.set(bg);grid.material.color.set(isDarkMode?0x0a2040:0xc8d8e8);
+  document.getElementById('theme-icon').textContent=isDarkMode?'☀️':'🌙';
+  document.getElementById('theme-label').textContent=isDarkMode?'LIGHT MODE':'DARK MODE';
+}
+function updateCarOpacity(val){document.getElementById('opacity-val').textContent=val+'%';document.getElementById('opacity-slider').style.background=`linear-gradient(to right,var(--accent) 0%,var(--accent) ${val}%,var(--border) ${val}%)`;carBodyMats.forEach(m=>{m.opacity=val/100;});}
+
+// ── FILE PARSING ──
+function parseCsvText(text){
+  const lines=text.trim().split('\n').map(l=>l.replace(/\r/g,'').trim()).filter(l=>l.length>0);
+  if(lines.length<2)return null;
+  const headers=lines[0].split(',').map(h=>h.trim().replace(/^\uFEFF/,'').replace(/^["']|["']$/g,'').trim());
+  const rows=[];
+  for(let r=1;r<lines.length;r++){const vals=lines[r].split(',').map(v=>v.trim().replace(/^["']|["']$/g,''));if(vals.length!==headers.length)continue;const obj={};headers.forEach((h,i)=>{obj[h]=vals[i];});rows.push(obj);}
+  return{headers,rows};
+}
+function colRefToIdx(ref){const letters=ref.replace(/[0-9]/g,'');let idx=0;for(let i=0;i<letters.length;i++)idx=idx*26+(letters.charCodeAt(i)-64);return idx-1;}
+async function parseXlsxBuffer(buffer){
+  const bytes=new Uint8Array(buffer);
+  if(bytes[0]===0x50&&bytes[1]===0x4B){return parseXlsxZip(buffer);}
+  const text=new TextDecoder('utf-8',{fatal:false}).decode(bytes);
+  const result=parseCsvText(text);if(result)return result;throw new Error('Unrecognised file format');
+}
+async function parseXlsxZip(buffer){
+  const bytes=new Uint8Array(buffer);const view=new DataView(buffer);
+  const entries={};let pos=0;
+  while(pos<bytes.length-4){
+    if(view.getUint32(pos,true)===0x04034B50){
+      const compMethod=view.getUint16(pos+8,true);const compSize=view.getUint32(pos+18,true);
+      const fnLen=view.getUint16(pos+26,true);const extraLen=view.getUint16(pos+28,true);
+      const fname=new TextDecoder().decode(bytes.slice(pos+30,pos+30+fnLen));
+      const dataStart=pos+30+fnLen+extraLen;
+      entries[fname]={data:bytes.slice(dataStart,dataStart+compSize),method:compMethod};
+      pos=dataStart+compSize;
+    }else{pos++;}
+  }
+  async function decomp(entry){
+    if(entry.method===0)return entry.data;
+    if(!window.DecompressionStream)throw new Error('DecompressionStream not supported');
+    const ds=new DecompressionStream('deflate-raw');
+    const w=ds.writable.getWriter(),r=ds.readable.getReader();
+    w.write(entry.data);w.close();
+    const chunks=[];let done=false;
+    while(!done){const{value,done:d}=await r.read();if(value)chunks.push(value);done=d;}
+    const total=chunks.reduce((a,c)=>a+c.length,0);const out=new Uint8Array(total);let off=0;
+    for(const c of chunks){out.set(c,off);off+=c.length;}return out;
+  }
+  const dec=new TextDecoder('utf-8');
+  const ssRaw=entries['xl/sharedStrings.xml']?await decomp(entries['xl/sharedStrings.xml']):null;
+  const shRaw=entries['xl/worksheets/sheet1.xml']?await decomp(entries['xl/worksheets/sheet1.xml']):null;
+  if(!shRaw)throw new Error('No worksheet data in file');
+  const strings=[];
+  if(ssRaw){const doc=new DOMParser().parseFromString(dec.decode(ssRaw),'text/xml');doc.querySelectorAll('si').forEach(si=>{strings.push([...si.querySelectorAll('t')].map(x=>x.textContent).join(''));});}
+  const shDoc=new DOMParser().parseFromString(dec.decode(shRaw),'text/xml');
+  const rowEls=shDoc.querySelectorAll('row');const headers=[],rows=[];
+  rowEls.forEach((rowEl,ri)=>{
+    const cells=rowEl.querySelectorAll('c');
+    if(ri===0){cells.forEach(c=>{const t=c.getAttribute('t'),v=c.querySelector('v');if(!v){headers.push('');return;}headers.push(t==='s'?strings[+v.textContent]||'':v.textContent);});}
+    else{const obj={};cells.forEach(c=>{const ref=c.getAttribute('r');if(!ref)return;const ci=colRefToIdx(ref);if(ci>=headers.length)return;const t=c.getAttribute('t'),v=c.querySelector('v');if(!v)return;obj[headers[ci]]=t==='s'?strings[+v.textContent]||'':v.textContent;});rows.push(obj);}
+  });
+  return{headers,rows};
+}
+
+// ── TEST DATA UPLOAD ──
+function handleCsvFile(file){
+  if(!file)return;
+  document.getElementById('csv-filename').textContent='📄 '+file.name;
+  setCsvStatus('Reading...','info-msg');document.getElementById('csv-debug').style.display='none';
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    try{
+      const result=await parseXlsxBuffer(e.target.result);
+      if(!result||result.rows.length===0){setCsvStatus('❌ No data rows found','err-msg');return;}
+      csvAllRows=result.rows;
+      const headers=result.headers;
+      const knownIds=SENSORS.map(s=>s.id);
+      const matched=headers.filter(h=>knownIds.includes(h));
+      const unmatched=headers.filter(h=>!knownIds.includes(h));
+      const dbg=document.getElementById('csv-debug');dbg.style.display='block';
+      dbg.innerHTML=`<span style="color:var(--ok)">✓ ${matched.length} sensors matched</span><br>`+(unmatched.length?`<span style="color:var(--warn)">⚠ ${unmatched.length} unrecognised columns</span><br>`:'')+`<span style="color:var(--dim)">${csvAllRows.length} rows loaded</span>`;
+      if(matched.length===0){setCsvStatus('❌ No matching sensor IDs','err-msg');return;}
+      currentTestMileage=guessMileage(file.name);
+      const lastRow=csvAllRows[csvAllRows.length-1];
+      const sensorData={};headers.forEach(h=>{const v=parseFloat(lastRow[h]);if(!isNaN(v))sensorData[h]=v;});
+      setCsvStatus(`⏳ Analysing ${matched.length} sensors...`,'info-msg');
+      await runAnalysis(sensorData);
+      renderEnvelopeChart();
+    }catch(err){setCsvStatus('❌ '+err.message,'err-msg');console.error(err);}
+  };
+  reader.onerror=()=>setCsvStatus('❌ Cannot read file','err-msg');
+  reader.readAsArrayBuffer(file);
+}
+function guessMileage(name){const m=name.match(/(\d{4,6})/);return m?parseInt(m[1]):50000;}
+function setCsvStatus(msg,cls){const el=document.getElementById('csv-status');el.textContent=msg;el.className=cls;}
+async function runAnalysis(sensorData){
+  try{const resp=await fetch('http://localhost:5000/run_prediction',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sensor_data:sensorData}),signal:AbortSignal.timeout(3000)});
+    if(resp.ok){const data=await resp.json();if(data.predictions?.length){window.applyPredictions(data.predictions);const f=data.predictions.filter(p=>p.status==='fault').length,w=data.predictions.filter(p=>p.status==='warn').length;setCsvStatus(f?`⚠ ${f} FAULT(S) · ${w} WARN(S)`:'✓ All sensors nominal',f?'err-msg':'ok-msg');return;}}
+  }catch(_){}
+  const bucketKey=getMileageBucket(currentTestMileage);
+  const predictions=SENSORS.map(s=>{
+    const cur=sensorData[s.id];if(cur===undefined)return{sensorId:s.id,status:'ok',curVal:s.curVal,anomalyScore:0};
+    const env=getEnvelope(bucketKey,s.id);let score,status;
+    if(env&&env.mean.length>0){
+      const allVals=csvAllRows.map(r=>parseFloat(r[s.id])).filter(v=>!isNaN(v));
+      const rpmVals=csvAllRows.map(r=>parseFloat(r['Engine Speed[rpm]'])).filter(v=>!isNaN(v));
+      let totalDev=0,count=0;
+      allVals.forEach((v,i)=>{const rpm=rpmVals[i];if(!rpm)return;const bi=Math.floor((rpm-RPM_MIN)/((RPM_MAX-RPM_MIN)/RPM_BINS));if(bi<0||bi>=env.mean.length)return;const m=env.mean[bi],u=env.upper[bi],l=env.lower[bi],std=Math.max((u-l)/2,0.001);totalDev+=Math.abs(v-m)/std;count++;});
+      const avgZ=count>0?totalDev/count:0;score=Math.min(avgZ/3.5,1.0);status=avgZ>3.5?'fault':avgZ>2.0?'warn':'ok';
+    }else{score=0;status='ok';}
+    return{sensorId:s.id,status,curVal:+cur.toFixed(4),anomalyScore:+score.toFixed(4)};
+  });
+  window.applyPredictions(predictions);
+  const f=predictions.filter(p=>p.status==='fault').length,w=predictions.filter(p=>p.status==='warn').length;
+  const hasRef=Object.values(refDB).some(arr=>arr.length>0);
+  setCsvStatus((hasRef?'':'⚡ Offline · ')+(f?`⚠ ${f} FAULT(S) · ${w} WARN(S)`:'✓ All sensors nominal'),f?'err-msg':'ok-msg');
+}
+
+// ── MILEAGE BUCKETS ──
+function getMileageBucket(km){for(const b of MILEAGE_BUCKETS)if(km>=b.min&&km<b.max)return b.key;return MILEAGE_BUCKETS[MILEAGE_BUCKETS.length-1].key;}
+function addRefFile(bucketKey,filename,rows){
+  refDB[bucketKey].push({filename,rows,rowCount:rows.length});
+  Object.keys(envelopeCache).forEach(k=>{if(k.startsWith(bucketKey+'|'))delete envelopeCache[k];});
+  updateDbStats();
+  // Persist to IndexedDB
+  idbPut({id:bucketKey+'|'+filename,bucketKey,filename,rowCount:rows.length,rows});
+}
+function removeRefFile(bucketKey,idx){
+  const entry=refDB[bucketKey][idx];
+  if(entry) idbDelete(bucketKey+'|'+entry.filename);
+  refDB[bucketKey].splice(idx,1);
+  Object.keys(envelopeCache).forEach(k=>{if(k.startsWith(bucketKey+'|'))delete envelopeCache[k];});
+  buildRefPage();
+}
+function updateDbStats(){
+  let tf=0,tr=0,ru=0;
+  MILEAGE_BUCKETS.forEach(b=>{const f=refDB[b.key];if(f.length){ru++;tf+=f.length;f.forEach(x=>tr+=x.rowCount);}});
+  document.getElementById('db-total-files').textContent=tf;
+  document.getElementById('db-total-rows').textContent=tr.toLocaleString();
+  document.getElementById('db-ranges').textContent=`${ru}/8`;
+  document.getElementById('db-sensors').textContent=SENSORS.length;
+}
+
+// ── ENVELOPE COMPUTATION ──
+
+
+function getEnvelope(bucketKey,sensorId){
+  const ck=`${bucketKey}|${sensorId}`;if(envelopeCache[ck])return envelopeCache[ck];
+  const files=refDB[bucketKey];if(!files||!files.length)return null;
+  const allRows=files.flatMap(f=>f.rows);
+  const binSize=(RPM_MAX-RPM_MIN)/RPM_BINS;
+  const bins=Array.from({length:RPM_BINS},()=>[]);
+  allRows.forEach(row=>{const rpm=parseFloat(row['Engine Speed[rpm]']);const val=parseFloat(row[sensorId]);if(isNaN(rpm)||isNaN(val))return;const bi=Math.floor((rpm-RPM_MIN)/binSize);if(bi>=0&&bi<RPM_BINS)bins[bi].push(val);});
+  const rpmCenters=[],mean=[],upper=[],lower=[];
+  bins.forEach((b,i)=>{if(!b.length)return;const m=b.reduce((a,v)=>a+v,0)/b.length;const std=b.length>1?Math.sqrt(b.reduce((a,v)=>a+(v-m)**2,0)/(b.length-1)):Math.abs(m)*0.05||0.5;rpmCenters.push(RPM_MIN+(i+0.5)*binSize);mean.push(m);upper.push(m+std);lower.push(m-std);});
+  const env={rpmCenters,mean,upper,lower};envelopeCache[ck]=env;return env;
+}
+function getTestBinned(sensorId){
+  if(!csvAllRows.length)return[];
+  const binSize=(RPM_MAX-RPM_MIN)/RPM_BINS;
+  const bins=Array.from({length:RPM_BINS},()=>[]);
+  csvAllRows.forEach(row=>{const rpm=parseFloat(row['Engine Speed[rpm]']);const val=parseFloat(row[sensorId]);if(isNaN(rpm)||isNaN(val))return;const bi=Math.floor((rpm-RPM_MIN)/binSize);if(bi>=0&&bi<RPM_BINS)bins[bi].push(val);});
+  return bins.map((b,i)=>{if(!b.length)return null;return{rpm:RPM_MIN+(i+0.5)*binSize,val:b.reduce((a,v)=>a+v,0)/b.length};}).filter(Boolean);
+}
+// Raw test data points sorted ascending by RPM
+function getRawTestPointsSorted(sensorId){
+  if(!csvAllRows.length)return[];
+  const points=[];
+  csvAllRows.forEach(row=>{
+    const rpm=parseFloat(row['Engine Speed[rpm]']);
+    const val=parseFloat(row[sensorId]);
+    if(!isNaN(rpm)&&!isNaN(val)) points.push({x:rpm, y:val});
+  });
+  return points.sort((a,b)=>a.x-b.x);
+}
+
+
+// ── PAGE 2 BUILD ──
+function buildRefPage(){buildMileBuckets();buildEnvSensorSel();buildMileFilterBtns();renderEnvelopeChart();updateDbStats();}
+function buildMileBuckets(){
+  const c=document.getElementById('mile-bucket-list');c.innerHTML='';
+  MILEAGE_BUCKETS.forEach(bucket=>{
+    const files=refDB[bucket.key];const hasFiles=files.length>0;
+    const div=document.createElement('div');div.className='mile-bucket';
+    div.innerHTML=`
+      <div class="mile-bucket-header" onclick="toggleBucket('${bucket.key}')">
+        <span class="mbh-label">${bucket.label}</span>
+        <span class="mbh-badge ${hasFiles?'has-data':'no-data'}">${files.length} file${files.length!==1?'s':''}</span>
+      </div>
+      <div class="mile-bucket-body" id="mbb-${bucket.key}">
+        <div class="ref-file-list">
+          ${!hasFiles?'<div class="no-files-msg">No reference files yet</div>':files.map((f,i)=>`<div class="ref-file-item"><span class="rfi-name" title="${f.filename}">${f.filename}</span><span class="rfi-rows">${f.rowCount}r</span><button class="rfi-del" onclick="event.stopPropagation();removeRefFile('${bucket.key}',${i})">✕</button></div>`).join('')}
+        </div>
+        <label class="ref-upload-label" for="rfu-${bucket.key}">＋ ADD REFERENCE CSV</label>
+        <input type="file" class="ref-upload-input" id="rfu-${bucket.key}" accept=".csv,.xlsx,.xls" data-bucket="${bucket.key}" onchange="handleRefUpload(this)"/>
+      </div>`;
+    c.appendChild(div);
+  });
+}
+function toggleBucket(key){const b=document.getElementById('mbb-'+key);b.classList.toggle('open');}
+function buildEnvSensorSel(){const sel=document.getElementById('env-sensor-select');sel.innerHTML='';SENSORS.forEach(s=>{const o=document.createElement('option');o.value=s.id;o.textContent=s.name;sel.appendChild(o);});}
+function buildMileFilterBtns(){
+  const wrap=document.getElementById('mile-filter-btns');wrap.innerHTML='';
+  MILEAGE_BUCKETS.forEach(b=>{
+    const hasData=refDB[b.key].length>0;
+    const btn=document.createElement('button');
+    btn.className='mfb'+(b.key===selectedEnvBucket?' active':'')+(hasData?' has-data':'');
+    btn.dataset.key=b.key;btn.textContent=b.label;
+    btn.onclick=()=>{
+      selectedEnvBucket=b.key;
+      document.querySelectorAll('.mfb').forEach(x=>x.classList.remove('active'));
+      btn.classList.add('active');
+      renderEnvelopeChart();
+    };
+    wrap.appendChild(btn);
+  });
+}
+
+// ── ANIMATION SPEED CONTROL (matching old code) ──
+function updateAnimSpeed(val){
+  animSpeedMs=parseInt(val);
+  document.getElementById('anim-speed-val').textContent=animSpeedMs+' ms/pt';
+  if(animFrame){
+    cancelAnimationFrame(animFrame);
+    animFrame=null;
+    currentAnimIndex=0;
+    startAnimation();
+  }
+}
+
+function startAnimation(){
+  if(!rawPointsSorted.length)return;
+  const step=()=>{
+    if(currentAnimIndex<rawPointsSorted.length){
+      currentAnimIndex=Math.min(currentAnimIndex+1,rawPointsSorted.length);
+      updateChartWithPartialData();
+      setTimeout(()=>{animFrame=requestAnimationFrame(step);},animSpeedMs);
+    }else{animFrame=null;}
+  };
+  animFrame=requestAnimationFrame(step);
+}
+
+function updateChartWithPartialData(){
+  if(!envChart)return;
+  const ds=envChart.data.datasets.find(d=>d.label==='Raw Test Data');
+  if(ds){ds.data=rawPointsSorted.slice(0,currentAnimIndex);envChart.update();}
+}
+
+async function handleRefUpload(input){
+  const file=input.files[0],bucketKey=input.dataset.bucket;if(!file||!bucketKey)return;
+  const label=input.previousElementSibling,orig=label.innerHTML;label.innerHTML='⏳ Loading...';
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    try{const result=await parseXlsxBuffer(e.target.result);if(!result||!result.rows.length){alert('No data found.');label.innerHTML=orig;return;}
+      addRefFile(bucketKey,file.name,result.rows);buildRefPage();if(selectedEnvBucket===bucketKey)renderEnvelopeChart();}
+    catch(err){alert('Error: '+err.message);label.innerHTML=orig;}
+    input.value='';
+  };
+  reader.onerror=()=>{alert('Read error');label.innerHTML=orig;};
+  reader.readAsArrayBuffer(file);
+}
+
+// ── RENDER ENVELOPE CHART (Page 2) — exact old-code logic ──
+function renderEnvelopeChart(){
+  const sensorId=document.getElementById('env-sensor-select')?.value;if(!sensorId)return;
+  const env=getEnvelope(selectedEnvBucket,sensorId);
+  const noDataMsg=document.getElementById('env-no-data-msg');
+  const testBinned=getTestBinned(sensorId);
+  rawPointsSorted=getRawTestPointsSorted(sensorId);
+  if(animFrame){cancelAnimationFrame(animFrame);animFrame=null;}
+  currentAnimIndex=0;
+
+  if(!env||!env.mean.length){noDataMsg.classList.add('show');if(envChart){envChart.destroy();envChart=null;}return;}
+  noDataMsg.classList.remove('show');
+
+  const datasets=[
+    {label:'Upper Bound',data:env.upper.map((v,i)=>({x:env.rpmCenters[i],y:v})),borderColor:'transparent',backgroundColor:'rgba(0,201,107,0.18)',fill:'+1',pointRadius:0,tension:0.35,yAxisID:'y'},
+    {label:'Lower Bound',data:env.lower.map((v,i)=>({x:env.rpmCenters[i],y:v})),borderColor:'transparent',backgroundColor:'transparent',fill:false,pointRadius:0,tension:0.35,yAxisID:'y'},
+    {label:'Healthy Mean',data:env.mean.map((v,i)=>({x:env.rpmCenters[i],y:v})),borderColor:'#00c96b',borderWidth:2.5,borderDash:[6,4],backgroundColor:'transparent',fill:false,pointRadius:0,tension:0.35,yAxisID:'y'},
+  ];
+  if(testBinned.length){
+    datasets.push({
+      label:'Test Vehicle (binned mean)',
+      data:testBinned.map(d=>({x:d.rpm,y:d.val})),
+      borderColor:'#ff5533',borderWidth:2,backgroundColor:'transparent',
+      fill:false,pointRadius:2,pointBackgroundColor:'#ff5533',tension:0.2,spanGaps:true,yAxisID:'y'
+    });
+  }
+  // Raw test points as animated line (starts empty)
+  datasets.push({
+    label:'Raw Test Data',
+    data:[],
+    borderColor:'#ff5533',backgroundColor:'transparent',borderWidth:1.5,
+    pointRadius:1,pointBackgroundColor:'#ff5533',showLine:true,fill:false,tension:0.1,yAxisID:'y'
+  });
+
+  const sensor=SENSORS.find(s=>s.id===sensorId);
+  if(envChart)envChart.destroy();
+  const canvas=document.getElementById('env-chart');
+  envChart=new Chart(canvas.getContext('2d'),{
+    type:'line',
+    data:{datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,animation:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:true,position:'top',labels:{color:'rgba(200,223,240,0.7)',font:{size:10,family:'Rajdhani'},boxWidth:14,padding:14}},
+        tooltip:{
+          backgroundColor:'rgba(5,10,18,0.95)',titleColor:'#00d4ff',bodyColor:'#c8dff0',
+          borderColor:'rgba(26,58,92,0.8)',borderWidth:1,titleFont:{family:'Orbitron',size:10},
+          callbacks:{
+            title:items=>`RPM: ${items[0]?.parsed.x?.toFixed(0)||''}`,
+            label:ctx=>{if(ctx.dataset.label==='Upper Bound'||ctx.dataset.label==='Lower Bound')return null;return`${ctx.dataset.label}: ${ctx.parsed.y!=null?ctx.parsed.y.toFixed(3):'—'} ${sensor?.unit||''}`;}
+          }
+        }
+      },
+      scales:{
+        x:{type:'linear',title:{display:true,text:'Engine Speed (RPM)',color:'rgba(0,212,255,0.6)',font:{size:11,family:'Orbitron'}},ticks:{color:'rgba(150,180,200,0.6)',font:{size:9}},grid:{color:'rgba(255,255,255,0.04)'},min:RPM_MIN,max:RPM_MAX},
+        y:{title:{display:true,text:`${sensor?.name||sensorId} (${sensor?.unit||''})`,color:'rgba(0,212,255,0.6)',font:{size:10,family:'Orbitron'}},ticks:{color:'rgba(150,180,200,0.6)',font:{size:9}},grid:{color:'rgba(255,255,255,0.04)'}}
+      }
+    }
+  });
+  if(rawPointsSorted.length)startAnimation();
+}
+
+// ── GRAPH MODAL ──
+function openGraphModal(sensorId){
+  const s=SENSORS.find(x=>x.id===sensorId);if(!s)return;
+  const st=sensorStates[s.id],score=s.anomalyScore||0;
+  document.getElementById('graph-modal-title').textContent=`${s.icon}  ${s.name.toUpperCase()}`;
+  document.getElementById('graph-modal-desc').textContent=s.desc;
+  const curEl=document.getElementById('gm-cur');curEl.textContent=`${s.curVal} ${s.unit}`;curEl.className=`gm-value ${st}`;
+  const stEl=document.getElementById('gm-status');stEl.textContent=st.toUpperCase();stEl.className=`gm-value ${st}`;
+  const scEl=document.getElementById('gm-score');scEl.textContent=(score*100).toFixed(1)+'%';scEl.className=`gm-value ${st}`;
+  const bucketKey=getMileageBucket(currentTestMileage);const env=getEnvelope(bucketKey,s.id);
+  const refMean=env?.mean.length?(env.mean.reduce((a,b)=>a+b,0)/env.mean.length).toFixed(3):'—';
+  document.getElementById('gm-ref').textContent=refMean==='—'?'—':`${refMean} ${s.unit}`;
+  document.getElementById('no-ref-banner').style.display=(!env||!env.mean.length)?'block':'none';
+  const pct=Math.round(score*100);document.getElementById('gm-score-pct').textContent=pct+'%';
+  const fill=document.getElementById('anomaly-bar-fill');fill.style.width=pct+'%';fill.style.background=st==='ok'?'var(--ok)':st==='fault'?'var(--fault)':'var(--warn)';
+  document.getElementById('graph-modal').classList.add('open');
+  setTimeout(()=>drawModalChart(s,st,env),30);
+}
+function closeGraphModal(){document.getElementById('graph-modal').classList.remove('open');if(modalChart){modalChart.destroy();modalChart=null;}}
+document.getElementById('graph-modal').addEventListener('click',function(e){if(e.target===this)closeGraphModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeGraphModal();});
+function drawModalChart(s,status,env){
+  const canvas=document.getElementById('graph-canvas'),wrap=document.getElementById('chart-container');
+  if(modalChart){modalChart.destroy();modalChart=null;}
+  const testBinned=getTestBinned(s.id);
+  const rawPoints=getRawTestPointsSorted(s.id);
+  const hasTest=testBinned.length>0,hasEnv=env&&env.mean.length>0;
+  const datasets=[];
+  if(hasEnv){
+    datasets.push({
+      label:'Healthy Range (±1σ)',
+      data:env.upper.map((v,i)=>({x:env.rpmCenters[i], y:v})),
+      borderColor:'transparent',backgroundColor:'rgba(0,201,107,0.15)',
+      fill:'+1',pointRadius:0,tension:0.35,yAxisID:'y'
+    });
+    datasets.push({
+      label:'_lower',
+      data:env.lower.map((v,i)=>({x:env.rpmCenters[i], y:v})),
+      borderColor:'transparent',backgroundColor:'transparent',
+      fill:false,pointRadius:0,tension:0.35,yAxisID:'y'
+    });
+    datasets.push({
+      label:'Healthy Mean',
+      data:env.mean.map((v,i)=>({x:env.rpmCenters[i], y:v})),
+      borderColor:'#00c96b',borderWidth:2,borderDash:[7,4],
+      backgroundColor:'transparent',fill:false,pointRadius:0,tension:0.35,yAxisID:'y'
+    });
+    if(hasTest){
+      datasets.push({
+        label:'Test Vehicle (binned mean)',
+        data:testBinned.map(d=>({x:d.rpm, y:d.val})),
+        borderColor:'#ff5533',borderWidth:2.5,
+        backgroundColor:'rgba(255,85,51,0.07)',fill:false,
+        pointRadius:2,pointBackgroundColor:'#ff5533',tension:0.2,spanGaps:true,yAxisID:'y'
+      });
+    }
+    if(rawPoints.length){
+      datasets.push({
+        label:'Raw Test Data',
+        data:rawPoints,borderColor:'transparent',backgroundColor:'#ff5533',
+        type:'scatter',pointRadius:2,pointBackgroundColor:'#ff5533',
+        pointBorderColor:'transparent',showLine:false,yAxisID:'y'
+      });
+    }
+  } else if(hasTest){
+    datasets.push({
+      label:'Test Vehicle (binned mean)',
+      data:testBinned.map(d=>({x:d.rpm, y:d.val})),
+      borderColor:'#ff5533',borderWidth:2.5,
+      backgroundColor:'rgba(255,85,51,0.1)',fill:true,pointRadius:2,tension:0.2,yAxisID:'y'
+    });
+    if(rawPoints.length){
+      datasets.push({
+        label:'Raw Test Data',
+        data:rawPoints,borderColor:'transparent',backgroundColor:'#ff5533',
+        type:'scatter',pointRadius:2,pointBackgroundColor:'#ff5533',
+        pointBorderColor:'transparent',showLine:false,yAxisID:'y'
+      });
+    }
+  } else {
+    datasets.push({
+      label:'Current Value',
+      data:[{x:RPM_MIN, y:s.curVal||0}, {x:RPM_MAX, y:s.curVal||0}],
+      borderColor:'var(--accent)',borderWidth:2,
+      backgroundColor:'rgba(0,212,255,0.1)',fill:true,pointRadius:0,yAxisID:'y'
+    });
+  }
+  canvas.width=wrap.clientWidth;canvas.height=wrap.clientHeight;
+  modalChart=new Chart(canvas.getContext('2d'),{
+    type:'line',
+    data:{datasets},
+    options:{
+      responsive:false,animation:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:true,position:'top',labels:{color:'rgba(200,223,240,0.7)',font:{size:10,family:'Rajdhani'},boxWidth:14,padding:12,filter:item=>!item.text.startsWith('_')}},
+        tooltip:{
+          backgroundColor:'rgba(5,10,18,0.96)',titleColor:'#00d4ff',bodyColor:'#c8dff0',
+          borderColor:'rgba(26,58,92,0.8)',borderWidth:1,titleFont:{family:'Orbitron',size:10},
+          callbacks:{
+            title:items=>`RPM: ${items[0]?.parsed.x?.toFixed(0)||''}`,
+            label:ctx=>{if(ctx.dataset.label.startsWith('_'))return null;return`${ctx.dataset.label}: ${ctx.parsed.y!=null?ctx.parsed.y.toFixed(3):'—'} ${s.unit}`;},
+            filter:item=>!item.dataset.label.startsWith('_')
+          }
+        }
+      },
+      scales:{
+        x:{type:'linear',title:{display:true,text:'Engine Speed (RPM)',color:'rgba(0,212,255,0.55)',font:{size:10,family:'Orbitron'}},ticks:{color:'rgba(150,180,200,0.6)',font:{size:9},maxTicksLimit:8},grid:{color:'rgba(255,255,255,0.04)'},min:RPM_MIN,max:RPM_MAX},
+        y:{title:{display:true,text:`${s.name} (${s.unit})`,color:'rgba(0,212,255,0.55)',font:{size:9,family:'Orbitron'}},ticks:{color:'rgba(150,180,200,0.6)',font:{size:9}},grid:{color:'rgba(255,255,255,0.04)'}}
+      }
+    }
+  });
+}
+
+// ── BACKEND POLLING ──
+async function pollBackend(){try{const resp=await fetch('http://localhost:5000/predict',{method:'GET',signal:AbortSignal.timeout(2000)});if(!resp.ok)return;const data=await resp.json();if(data.predictions)window.applyPredictions(data.predictions);}catch(_){}}
+setInterval(pollBackend,3000);
+
+// ════════════════════════════════════════════════════════════════
+//  INDEXEDDB PERSISTENCE — Reference files survive page reloads
+//  DB name: EngineDigitalTwinRefDB  |  Store: refFiles
+//  Each record: { id (bucketKey+'|'+filename), bucketKey, filename, rowCount, rows }
+// ════════════════════════════════════════════════════════════════
+const IDB_NAME='EngineDigitalTwinRefDB';
+const IDB_VER=1;
+const IDB_STORE='refFiles';
+let idb=null;
+
+function openIDB(){
+  return new Promise((resolve,reject)=>{
+    const req=indexedDB.open(IDB_NAME,IDB_VER);
+    req.onupgradeneeded=e=>{e.target.result.createObjectStore(IDB_STORE,{keyPath:'id'});};
+    req.onsuccess=e=>{idb=e.target.result;resolve(idb);};
+    req.onerror=e=>reject(e.target.error);
+  });
+}
+function idbPut(record){
+  if(idb){
+    const tx=idb.transaction(IDB_STORE,'readwrite');
+    tx.objectStore(IDB_STORE).put(record);
+  } else {
+    // IDB not ready yet — open and then write
+    openIDB().then(()=>{
+      const tx=idb.transaction(IDB_STORE,'readwrite');
+      tx.objectStore(IDB_STORE).put(record);
+    }).catch(e=>console.warn('idbPut deferred failed:',e));
+  }
+}
+function idbDelete(id){
+  if(idb){
+    const tx=idb.transaction(IDB_STORE,'readwrite');
+    tx.objectStore(IDB_STORE).delete(id);
+  }
+}
+function idbGetAll(){
+  return new Promise((resolve,reject)=>{
+    if(!idb){resolve([]);return;}
+    const tx=idb.transaction(IDB_STORE,'readonly');
+    const req=tx.objectStore(IDB_STORE).getAll();
+    req.onsuccess=e=>resolve(e.target.result||[]);
+    req.onerror=e=>reject(e.target.error);
+  });
+}
+
+
+async function loadPersistedRefFiles(){
+  try{
+    await openIDB();
+    const records=await idbGetAll();
+    if(!records.length){console.log('IDB: no persisted ref files.');return;}
+    records.forEach(rec=>{
+      if(!refDB[rec.bucketKey])return;
+      // Avoid duplicates
+      if(refDB[rec.bucketKey].some(f=>f.filename===rec.filename))return;
+      refDB[rec.bucketKey].push({filename:rec.filename,rows:rec.rows,rowCount:rec.rowCount});
+      Object.keys(envelopeCache).forEach(k=>{if(k.startsWith(rec.bucketKey+'|'))delete envelopeCache[k];});
+    });
+    updateDbStats();
+    buildRefPage();
+    console.log(`IDB: loaded ${records.length} persisted reference file(s).`);
+  }catch(err){
+    console.warn('IDB load error:',err);
+  }
+}
+
+// ── BOOT ──
+loadCarModel();animate();updateDbStats();
+loadPersistedRefFiles();
+</script>
+</body>
+</html>
